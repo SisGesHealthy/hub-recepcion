@@ -14,10 +14,10 @@ export const CONFIG = {
   useMock: true,
 
   msal: {
-    // Mismo registro de Entra que Hub Asistencia (mismo sitio, ya con
-    // consentimiento de admin) — solo hay que agregarle la URL de esta app
-    // como redirect SPA y el permiso delegado SharePoint AllSites.Write.
-    clientId: "6ddebf41-051f-4360-bbab-225efdca198d",
+    // Registro propio "Hub Recepción" en Entra ID (SPA + permiso delegado
+    // SharePoint AllSites.Write con consentimiento de admin, ver README).
+    // Pendiente: pegar aquí el Id. de aplicación (cliente) cuando se registre.
+    clientId: "PENDIENTE-ID-DE-APLICACION",
     authority: "https://login.microsoftonline.com/8f9b210d-f5e5-404f-9fed-a0a827154105",
     redirectUri: window.location.origin + window.location.pathname,
   },

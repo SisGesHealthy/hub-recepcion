@@ -56,20 +56,26 @@ copia en `Liberaciones.ID_1`, `PalletsRecepcion.RecepcionID` y `Recepciones.ID_1
 
 ## Puesta en marcha (una sola vez)
 
-### 1. Permiso en Entra ID (se reutiliza el registro de Hub Asistencia)
-No hace falta registrar otra app. En **Entra ID → Registros de aplicaciones → Hub Asistencia**
-(`6ddebf41-051f-4360-bbab-225efdca198d`):
-1. **Autenticación → Single-page application → Agregar URI**:
+### 1. Registro propio en Entra ID (lo hace un administrador)
+Requiere una cuenta con rol *Administrador de aplicaciones* o *Administrador global*
+(`sistemasdegestion@` no puede hacerlo).
+1. **Entra ID → Registros de aplicaciones → Nuevo registro**: nombre **Hub Recepción**,
+   "Cuentas de este directorio organizativo solamente". Sin URI por ahora → Registrar.
+2. **Authentication → Agregar una plataforma → Aplicación de página única**:
    - `http://localhost:8794/` (pruebas)
    - `https://sisgeshealthy.github.io/hub-recepcion/` (producción)
-2. **Permisos de API → Agregar un permiso → SharePoint → Permisos delegados → `AllSites.Write`**
-   → **Conceder consentimiento de administrador**.
+3. **Permisos de API → Agregar un permiso → SharePoint → Permisos delegados → `AllSites.Write`**
+   → **Conceder consentimiento de administrador**. (Se puede quitar `User.Read` de Graph si
+   viene por defecto; no se usa.)
 
    Este permiso es necesario porque las fotos de pallet y la firma se guardan como
    *adjuntos* del ítem (así las guarda la Power App en sus columnas de imagen), y
    Microsoft Graph no sabe escribir adjuntos de lista.
+4. Copiar el **Id. de aplicación (cliente)** (no es secreto) en `js/config.js → msal.clientId`
+   y cambiar `useMock: true` → `false`.
 
-Luego, en `js/config.js`, cambiar `useMock: true` → `false`.
+Se usa un registro propio (y no el de Hub Asistencia) para que cada app tenga solo sus
+permisos y no dependan una de la otra.
 
 ### 2. Flujo de correo (opción A: cambiar solo el disparador)
 El flujo actual empieza con *"Cuando Power Apps llama a un flujo (V2)"*, que una PWA no puede
