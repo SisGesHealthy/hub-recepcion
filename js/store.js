@@ -244,7 +244,7 @@ export async function iniciarRecepcion(orden) {
   } catch {}
   if (enServidor) {
     rec.inicio = enServidor.HoraLlegada || ahora;
-    rec.pallets = await palletsDelServidor(idn);
+    rec.pallets = await palletsDelServidor(idn, rec.inicio);
   } else {
     await encolar({
       tipo: "add",
@@ -265,8 +265,15 @@ export async function iniciarRecepcion(orden) {
   return rec;
 }
 
-async function palletsDelServidor(idn) {
-  const rows = await api.items("pallets", { where: [["RecepcionID_Num_x002c_", "eq", idn]], orderby: "NumeroPallet asc" });
+// El ID_N no es único en el tiempo: una orden recibida dos veces, o el mismo
+// número al año siguiente (n + día + mes), comparten RecepcionID. Por eso se
+// toman solo los pallets registrados desde que empezó ESTA recepción.
+async function palletsDelServidor(idn, desde) {
+  const inicio = new Date(new Date(desde).getTime() - 60000); // 1 min de margen por reloj
+  const rows = await api.items("pallets", {
+    where: [["RecepcionID_Num_x002c_", "eq", idn], ["HoraRegistro", "ge", inicio]],
+    orderby: "NumeroPallet asc",
+  });
   return rows.map((p) => ({
     idLocal: p.Title || `sp-${p.ID}`,
     spId: p.ID,

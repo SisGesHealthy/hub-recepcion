@@ -35,13 +35,18 @@ Agregarlas **en este orden, una debajo de otra**, antes de que el flujo se divid
 |---|---|---|
 | **Orden** | SharePoint → Obtener elementos | Lista: *ÓRDENES DE RECEPCIÓN* · Consulta de filtro: `OData__x0049_D2 eq @{triggerBody()?['ID_1']}` · Número superior: `1` |
 | **Liberacion** | SharePoint → Obtener elementos | Lista: *Liberaciones* · Filtro: `ID_1 eq @{triggerBody()?['ID_1']}` · Ordenar por: `ID desc` · Número superior: `1` |
-| **Pallets** | SharePoint → Obtener elementos | Lista: *PalletsRecepcion* · Filtro: `RecepcionID_Num_x002c_ eq @{triggerBody()?['ID_1']}` · Ordenar por: `NumeroPallet asc` |
+| **Pallets** | SharePoint → Obtener elementos | Lista: *PalletsRecepcion* · Filtro: `RecepcionID_Num_x002c_ eq @{triggerBody()?['ID_1']} and HoraRegistro ge '@{addMinutes(triggerBody()?['HoraLlegada'], -1)}' and HoraRegistro le '@{triggerBody()?['HoraCierre']}'` · Ordenar por: `NumeroPallet asc` |
 | **Adjuntos firma** | SharePoint → Obtener datos adjuntos | Lista: *Recepciones* · Id: `ID` del disparador |
 | **Contenido firma** | SharePoint → Obtener contenido de datos adjuntos | Lista: *Recepciones* · Id: `ID` del disparador · Identificador de archivo: expresión `first(body('Adjuntos_firma'))?['Id']` |
 | **Filas pallets** | Operación de datos → Seleccionar | Desde: `body('Pallets')?['value']` · Asignar (modo tabla): `Pallet` → `item()?['NumeroPallet']`, `Bruto kg` → `item()?['PesoBruto']`, `Envases` → `item()?['Envases']`, `Peso envase kg` → `item()?['P_unitario']`, `Neto kg` → `item()?['PesoNeto']` |
 | **Tabla pallets** | Operación de datos → Crear tabla HTML | Desde: `body('Filas_pallets')` · Columnas: Automático |
 | **Envases** | Operación de datos → Seleccionar | Desde: `body('Pallets')?['value']` · Asignar (cambiar a **modo texto**, ícono a la derecha): `item()?['Envases']` |
 | **Total envases** | Operación de datos → Redactar | Entradas (expresión): `xpath(xml(json(concat('{"r":{"e":', string(body('Envases')), '}}'))), 'sum(/r/e)')` |
+
+> **Por qué el filtro de Pallets lleva horas:** el número de orden (`ID_1`) no es único en
+> el tiempo. Una orden recibida dos veces, o el mismo número al año siguiente (orden + día
+> + mes), comparten pallets. Con el rango HoraLlegada–HoraCierre se toman solo los
+> pallets de ESTA recepción.
 
 ## 3. Correo interno — reemplazar el contenido de **Redactar**
 ```html
