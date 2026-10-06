@@ -130,7 +130,21 @@ async function pantallaRecepcion(vista, idn) {
       vacio(vista, "No se encontró la orden. Vuelve a la lista y actualiza.");
       return;
     }
-    rec = await st.iniciarRecepcion(orden);
+    // Mismo camino que "Iniciar recepción": si no hay una abierta pero sí una
+    // cerrada de esta orden, preguntar si se continúa.
+    let previa = null;
+    if (!(await st.recepcionesEnProceso()).has(idn)) {
+      previa = await st.recepcionPrevia(orden);
+      if (previa) {
+        const elegida = await elegirPrevia(previa);
+        if (!elegida) {
+          location.hash = "#/bodega";
+          return;
+        }
+        if (elegida !== "continuar") previa = null;
+      }
+    }
+    rec = await st.iniciarRecepcion(orden, previa);
   }
   const o = rec.orden;
   const tara = await st.getTaraRecordada(o);
@@ -257,6 +271,7 @@ async function pantallaRecepcion(vista, idn) {
         : "Se quita la recepción vacía y la orden vuelve a mostrar \"Iniciar recepción\".";
       if (!(await confirmar("Cancelar esta recepción", txt, { si: "Cancelar recepción", no: "Volver", peligro: true }))) return;
       await st.cancelarRecepcionVacia(rec);
+      await st.sincronizar();
       toast("Recepción cancelada");
       location.hash = "#/bodega";
     },

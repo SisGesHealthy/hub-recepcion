@@ -213,7 +213,14 @@ export async function recepcionesEnProceso() {
     const rows = await api.items("recepciones", { where: [["Estado", "eq", "En Proceso"]], top: 200 });
     const set = rows.map((r) => r.ID_1);
     await kv.set("cache:enproceso", set);
-    return new Set(set);
+    // Una recepción cancelada cuyo cambio aún está en la cola ya no cuenta
+    // como "en proceso" (si no, la orden mostraría "Continuar" unos segundos).
+    const cerrandose = new Set(
+      (await idb.getAll("outbox"))
+        .filter((o) => o.lista === "recepciones" && (o.tipo === "removeWhere" || o.campos?.Estado === "Finalizada" || o.camposFinales?.Estado === "Finalizada"))
+        .map((o) => o.where?.find((w) => w[0] === "ID_1")?.[2])
+    );
+    return new Set(set.filter((idn) => !cerrandose.has(idn)));
   } catch {
     return new Set(await kv.get("cache:enproceso", []));
   }
@@ -236,6 +243,7 @@ export async function listarRecepcionesLocales() {
 // año anterior no se confunde.
 export async function recepcionPrevia(orden) {
   const idn = idnDe(orden);
+  await esperarColaDe(idn);
   const desde = new Date(new Date(orden.Created || 0).getTime() - 86400000);
   let previa = null;
   try {
@@ -248,11 +256,26 @@ export async function recepcionPrevia(orden) {
   return { item: previa, pallets, neto: r2(pallets.reduce((a, p) => a + (+p.neto || 0), 0)) };
 }
 
+// Antes de buscar en SharePoint qué recepción tiene esta orden, se deja subir
+// lo que esté en cola para ella (ej. una cancelación recién hecha); si no,
+// se podría retomar la fila que se está borrando. Sin red se sigue igual.
+async function esperarColaDe(idn, maxMs = 15000) {
+  const t0 = Date.now();
+  const pendiente = async () =>
+    (await idb.getAll("outbox")).some((o) => o.lista === "recepciones" && o.where?.some((w) => w[0] === "ID_1" && w[2] === idn));
+  while ((await pendiente()) && Date.now() - t0 < maxMs && (navigator.onLine || CONFIG.useMock)) {
+    await sincronizar();
+    if (estadoSync.error) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
 // previa: resultado de recepcionPrevia() si el usuario eligió continuarla.
 export async function iniciarRecepcion(orden, previa = null) {
   const idn = idnDe(orden);
   const existente = await getRecepcionLocal(idn);
   if (existente) return existente;
+  await esperarColaDe(idn);
   const ahora = new Date().toISOString();
   const rec = { idn, orden, inicio: ahora, pallets: [] };
 
