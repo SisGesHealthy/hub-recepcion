@@ -84,8 +84,40 @@ function tarjetaOrden(o, local, enServidor) {
 async function iniciar(orden, btn) {
   btn.disabled = true;
   btn.textContent = "Abriendo…";
-  await st.iniciarRecepcion(orden);
+  const previa = await st.recepcionPrevia(orden);
+  let elegida = null;
+  if (previa) {
+    elegida = await elegirPrevia(previa);
+    if (!elegida) {
+      btn.disabled = false;
+      btn.textContent = "Iniciar recepción";
+      return;
+    }
+  }
+  await st.iniciarRecepcion(orden, elegida === "continuar" ? previa : null);
   location.hash = `#/bodega/rec/${st.idnDe(orden)}`;
+}
+
+// La orden volvió a "Programada" pero ya tiene una recepción cerrada:
+// lo normal es seguir agregando pallets a esa misma recepción.
+function elegirPrevia(previa) {
+  return new Promise((resolve) => {
+    let r = null;
+    const it = previa.item;
+    const h = hoja(
+      "Esta orden ya tiene una recepción cerrada",
+      [
+        el("p", {}, [
+          `Recepción del ${st.fmtFecha(it.HoraLlegada)} · `,
+          el("b", {}, `${previa.pallets.length} pallet${previa.pallets.length === 1 ? "" : "s"} · ${st.fmtKg(previa.neto)} kg`),
+        ]),
+        el("button", { class: "btn btn-azul btn-xl", onclick: () => ((r = "continuar"), h.cerrar()) }, "Continuar esa recepción y agregar pallets"),
+        el("p", { class: "nota" }, "Los pallets nuevos siguen la numeración y, al finalizar, se recalculan los totales y se reenvía el resumen completo."),
+        el("button", { class: "btn btn-sec btn-xl", onclick: () => ((r = "nueva"), h.cerrar()) }, "Es otra entrega: empezar una recepción nueva"),
+      ],
+      { ancho: 520, onCerrar: () => resolve(r) }
+    );
+  });
 }
 
 // ---------------- recepción en proceso ----------------
@@ -108,7 +140,11 @@ async function pantallaRecepcion(vista, idn) {
   const avanceTxt = el("div", { class: "avance-txt" });
   const cab = el("section", { class: "rec-cab" }, [
     el("a", { href: "#/bodega", class: "volver" }, "← Órdenes"),
-    el("div", { class: "rec-titulo" }, [el("h1", {}, o.Proveedor?.trim()), el("span", {}, `${o.Fruta} · #${idn} · inicio ${st.fmtHora(rec.inicio)}`)]),
+    el("div", { class: "rec-titulo" }, [
+      el("h1", {}, o.Proveedor?.trim()),
+      el("span", {}, `${o.Fruta} · #${idn} · inicio ${rec.reabierta ? st.fmtFecha(rec.inicio) : st.fmtHora(rec.inicio)}`),
+      rec.reabierta ? el("span", { class: "estado estado-ambar chip-reabierta" }, "Reabierta") : null,
+    ]),
     el("div", { class: "avance" }, [avanceTxt, barra]),
   ]);
 
@@ -213,6 +249,18 @@ async function pantallaRecepcion(vista, idn) {
   // --- pallets registrados ---
   const listaPallets = el("div", { class: "pallets" });
   const btnFin = el("button", { class: "btn btn-azul btn-xl", onclick: () => cierre(rec) }, "Finalizar recepción");
+  const btnCancelar = el("button", {
+    class: "btn btn-sec cancelar-rec",
+    onclick: async () => {
+      const txt = rec.reabierta
+        ? "La recepción vuelve a quedar cerrada como estaba, sin reenviar el resumen."
+        : "Se quita la recepción vacía y la orden vuelve a mostrar \"Iniciar recepción\".";
+      if (!(await confirmar("Cancelar esta recepción", txt, { si: "Cancelar recepción", no: "Volver", peligro: true }))) return;
+      await st.cancelarRecepcionVacia(rec);
+      toast("Recepción cancelada");
+      location.hash = "#/bodega";
+    },
+  }, rec.reabierta ? "No agregar nada: dejarla cerrada" : "Cancelar recepción (abierta por error)");
 
   async function pintarPallets() {
     const t = st.totales(rec);
@@ -226,6 +274,7 @@ async function pantallaRecepcion(vista, idn) {
     );
     clear(listaPallets);
     btnFin.disabled = !rec.pallets.length;
+    btnCancelar.classList.toggle("hidden", !st.puedeCancelar(rec));
     if (!rec.pallets.length) {
       listaPallets.appendChild(el("div", { class: "vacio chico" }, "Aún no hay pallets. Toma la foto y pesa el primero."));
       return;
@@ -260,7 +309,7 @@ async function pantallaRecepcion(vista, idn) {
     cab,
     el("div", { class: "rec-grid" }, [
       el("section", { class: "card" }, form),
-      el("section", { class: "card" }, [el("h2", {}, "Pallets registrados"), listaPallets, el("div", { class: "fin-wrap" }, btnFin)]),
+      el("section", { class: "card" }, [el("h2", {}, "Pallets registrados"), listaPallets, el("div", { class: "fin-wrap" }, [btnFin, btnCancelar])]),
     ])
   );
   limpiarForm();

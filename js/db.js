@@ -7,7 +7,7 @@
 
 import { CONFIG } from "./config.js";
 
-const DB_NAME = "hub-recepcion";
+const DB_NAME = CONFIG.useMock ? "hub-recepcion-demo" : "hub-recepcion";
 const DB_VERSION = 1;
 let dbPromise = null;
 

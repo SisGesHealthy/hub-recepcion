@@ -230,7 +230,26 @@ export async function listarRecepcionesLocales() {
   return all.filter((x) => x.k.startsWith("rec:")).map((x) => x.v);
 }
 
-export async function iniciarRecepcion(orden) {
+// Recepción ya FINALIZADA de esta misma orden. Pasa cuando Bodega devuelve la
+// orden a "Programada" para agregar pallets (llegó otro viaje, faltó pesar
+// algo). Solo cuenta si empezó después de creada la orden: el mismo ID_N del
+// año anterior no se confunde.
+export async function recepcionPrevia(orden) {
+  const idn = idnDe(orden);
+  const desde = new Date(new Date(orden.Created || 0).getTime() - 86400000);
+  let previa = null;
+  try {
+    previa = await buscarUno("recepciones", [["ID_1", "eq", idn], ["Estado", "eq", "Finalizada"], ["HoraLlegada", "ge", desde]]);
+  } catch {
+    return null;
+  }
+  if (!previa) return null;
+  const pallets = await palletsDelServidor(idn, previa.HoraLlegada);
+  return { item: previa, pallets, neto: r2(pallets.reduce((a, p) => a + (+p.neto || 0), 0)) };
+}
+
+// previa: resultado de recepcionPrevia() si el usuario eligió continuarla.
+export async function iniciarRecepcion(orden, previa = null) {
   const idn = idnDe(orden);
   const existente = await getRecepcionLocal(idn);
   if (existente) return existente;
@@ -245,6 +264,19 @@ export async function iniciarRecepcion(orden) {
   if (enServidor) {
     rec.inicio = enServidor.HoraLlegada || ahora;
     rec.pallets = await palletsDelServidor(idn, rec.inicio);
+    if (enServidor.EstadoAnterior === "Reabierta") {
+      rec.reabierta = true;
+      rec.nPrevios = rec.pallets.length;
+    }
+  } else if (previa) {
+    // Reabrir: misma fila de Recepciones, mismos pallets, numeración sigue.
+    // Al finalizar se reescriben totales/firma y el flujo reenvía el resumen
+    // completo (su filtro HoraLlegada–HoraCierre abarca todos los pallets).
+    rec.inicio = previa.item.HoraLlegada;
+    rec.pallets = previa.pallets;
+    rec.reabierta = true;
+    rec.nPrevios = previa.pallets.length;
+    await encolar({ tipo: "update", lista: "recepciones", id: previa.item.ID, campos: { Estado: "En Proceso", EstadoAnterior: "Reabierta" } });
   } else {
     await encolar({
       tipo: "add",
@@ -330,6 +362,7 @@ export async function guardarPallet(rec, datos, fotoBlob) {
     await idb.put("blobs", { id: pallet.fotoLocal, blob: fotoBlob });
   }
   rec.pallets = editando ? rec.pallets.map((p) => (p.idLocal === pallet.idLocal ? pallet : p)) : [...rec.pallets, pallet];
+  rec.modificada = true;
   await kv.set(kRec(rec.idn), rec);
   await kv.set(kTara(rec.orden), { taraPallet: +datos.taraPallet || 0, pUnit: +datos.pUnit || 0 });
 
@@ -365,6 +398,7 @@ export async function eliminarPallet(rec, idLocal) {
   const p = rec.pallets.find((x) => x.idLocal === idLocal);
   if (!p) return;
   rec.pallets = rec.pallets.filter((x) => x.idLocal !== idLocal);
+  rec.modificada = true;
   await kv.set(kRec(rec.idn), rec);
   const where = p.spId ? [["ID", "eq", p.spId]] : [["Title", "eq", p.idLocal]];
   await encolar({ tipo: "removeWhere", lista: "pallets", where });
@@ -463,7 +497,27 @@ export async function finalizarRecepcion(rec, datos, firmaBlob) {
   return t;
 }
 
-export async function descartarRecepcionLocal(rec) {
+// Se puede cancelar solo si no se tocó ningún pallet (nueva: 0 pallets;
+// reabierta: los mismos que tenía y sin cambios pendientes en la cola).
+export function puedeCancelar(rec) {
+  if (!rec.reabierta) return rec.pallets.length === 0;
+  return rec.pallets.length === (rec.nPrevios || 0) && !rec.modificada;
+}
+
+// "Cancelar" una recepción abierta por error y sin pallets: quita la fila
+// vacía de Recepciones (va a la papelera del sitio) y la orden vuelve a
+// mostrar "Iniciar recepción".
+export async function cancelarRecepcionVacia(rec) {
+  if (!puedeCancelar(rec)) throw new Error("La recepción ya tiene cambios en sus pallets: finalízala.");
+  if (rec.reabierta) {
+    // Vuelve a quedar como estaba (EstadoAnterior Finalizada: no reenvía correo)
+    // y la orden, que Bodega había devuelto a "Programada", vuelve a Completada.
+    await encolar({ tipo: "updateWhere", lista: "recepciones", where: [["ID_1", "eq", rec.idn], ["Estado", "eq", "En Proceso"]], campos: { Estado: "Finalizada", EstadoAnterior: "Finalizada" } });
+    await encolar({ tipo: "update", lista: "ordenes", id: rec.orden.ID, campos: { Estado: "Completada" } });
+    await parcharOrdenLocal(rec.orden.ID, { Estado: "Completada" });
+  } else {
+    await encolar({ tipo: "removeWhere", lista: "recepciones", where: [["ID_1", "eq", rec.idn], ["Estado", "eq", "En Proceso"]] });
+  }
   await kv.del(kRec(rec.idn));
 }
 

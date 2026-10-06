@@ -11,7 +11,8 @@
 //                  registro de Entra, ver README.md).
 
 export const CONFIG = {
-  useMock: false,
+  // ?demo en la URL fuerza el modo demo (base local separada) sin tocar este archivo.
+  useMock: new URLSearchParams(location.search).has("demo"),
 
   msal: {
     // Registro propio "Hub Recepción" en Entra ID (SPA + permiso delegado

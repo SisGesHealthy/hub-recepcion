@@ -25,6 +25,14 @@ copia en `Liberaciones.ID_1`, `PalletsRecepcion.RecepcionID` y `Recepciones.ID_1
   así que cuando Calidad libera, el botón se activa sin tocar nada.
 - Si una recepción quedó a medias, la orden muestra *Continuar · N pallets* y no se crea una
   segunda (la Power App dejó 6 recepciones colgadas "En Proceso").
+- **Reabrir una recepción cerrada** (Bodega devuelve la orden a "Programada" porque llegó otro
+  viaje o faltó pesar algo): al tocar "Iniciar recepción" la app pregunta si continuar la
+  recepción anterior o empezar una nueva. Si se continúa, se reabre la misma fila de
+  Recepciones con sus pallets, la numeración sigue (2, 3…) y al finalizar se recalculan los
+  totales y se reenvía el resumen completo. "No agregar nada: dejarla cerrada" la devuelve tal
+  cual estaba, sin reenviar el correo.
+- Una recepción abierta por error y sin pallets se puede cancelar.
+- `?demo` al final de la URL abre el modo demo (con su propia base local) sin tocar `config.js`.
 - Pallet en la misma pantalla: la cámara abre directo, la foto se reduce a ~150 KB, el neto
   se calcula mientras se escribe, y el peso por envase y la tara se recuerdan por proveedor
   y fruta. Se pueden guardar varios pallets seguidos sin cambiar de pantalla.
