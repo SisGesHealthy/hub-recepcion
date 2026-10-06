@@ -13,6 +13,8 @@ let timer = null;
 export function render(vista, resto) {
   clearInterval(timer);
   if (resto[0] === "rec" && resto[1]) return pantallaRecepcion(vista, Number(resto[1]));
+  if (resto[0] === "recepciones") return import("./recepciones.js").then((m) => m.lista(vista));
+  if (resto[0] === "ver" && resto[1]) return import("./recepciones.js").then((m) => m.detalle(vista, Number(resto[1])));
   return pantallaOrdenes(vista);
 }
 
@@ -24,7 +26,10 @@ async function pantallaOrdenes(vista) {
   vista.append(
     el("div", { class: "cab" }, [
       el("div", {}, [el("h1", { class: "titulo" }, "Órdenes de recepción"), el("p", { class: "sub" }, "Se habilitan cuando Calidad libera la fruta")]),
-      el("button", { class: "btn btn-sec", onclick: () => cargar() }, "↻ Actualizar"),
+      el("div", { class: "cab-botones" }, [
+        el("a", { class: "btn btn-sec", href: "#/bodega/recepciones" }, "📋 Recepciones cerradas"),
+        el("button", { class: "btn btn-sec", onclick: () => cargar() }, "↻ Actualizar"),
+      ]),
     ]),
     aviso,
     lista
@@ -375,7 +380,11 @@ async function cierre(rec) {
     "Resumen de recepción",
     [
       el("div", { class: "resumen-tot" }, [
-        el("div", {}, [el("small", {}, "Neto recibido"), el("b", {}, `${st.fmtKg(t.neto)} kg`)]),
+        el("div", {}, [
+          el("small", {}, "Neto recibido"),
+          el("b", {}, `${st.fmtKg(t.neto)} kg`),
+          t.netoPesado !== t.neto ? el("small", {}, `pesado ${st.fmtKg(t.netoPesado)}`) : null,
+        ]),
         el("div", {}, [el("small", {}, "Bruto"), el("b", {}, `${st.fmtKg(t.bruto)} kg`)]),
         el("div", {}, [el("small", {}, "Tara"), el("b", {}, `${st.fmtKg(t.tara)} kg`)]),
         el("div", {}, [el("small", {}, "Pallets"), el("b", {}, String(t.n))]),

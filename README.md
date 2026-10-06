@@ -46,9 +46,12 @@ copia en `Liberaciones.ID_1`, `PalletsRecepcion.RecepcionID` y `Recepciones.ID_1
     mandaron a `sistemasdegestionhf@gmail.com` como relleno.
   - El bodeguero queda recordado en el dispositivo y el comentario se propone solo
     ("Se reciben 32 envases de maracuyá").
-- **Corrige dos errores de datos de la Power App**:
-  - `TotalTara` quedaba siempre en 0.
-  - `TotalNeto` truncaba los decimales (1424,5 se guardaba como 1424).
+- **Corrige `TotalTara`**, que en la Power App quedaba siempre en 0.
+- **`TotalNeto` se trunca al kilo inferior** (366,5 → 366), como lo procesa producción; cada
+  pallet conserva su neto exacto.
+- **Recepciones cerradas** (botón en Bodega): lista de los últimos días y resumen completo de
+  cada una (datos, liberación de Calidad, totales, pallets con foto, firma), con **Imprimir** para
+  el registro en papel y **Reenviar correo**.
 
 **Calidad (materia prima)**
 - Un solo paso: abrir la orden, ingresar °Brix, pH y acidez, y liberar o rechazar.

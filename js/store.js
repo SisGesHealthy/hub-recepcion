@@ -383,7 +383,11 @@ export function totales(rec) {
   }
   t.bruto = r2(t.bruto);
   t.tara = r2(t.tara);
-  t.neto = r2(t.neto);
+  // El neto TOTAL se trunca al kilo inferior (366,5 → 366): así lo procesa
+  // producción/Odoo. Cada pallet conserva su neto exacto; netoPesado es la
+  // suma sin truncar, solo para mostrar.
+  t.netoPesado = r2(t.neto);
+  t.neto = Math.floor(t.netoPesado + 1e-9);
   const prog = +rec.orden.CantidadProgramada || 0;
   t.programado = prog;
   t.restante = r2(prog - t.neto);
@@ -518,7 +522,7 @@ export async function finalizarRecepcion(rec, datos, firmaBlob) {
       campos: {
         TotalBruto: t.bruto,
         TotalTara: t.tara, // la Power App lo dejaba siempre en 0
-        TotalNeto: t.neto, // y truncaba los decimales del neto
+        TotalNeto: t.neto, // truncado al kilo inferior (ver totales())
         HoraCierre: ahora,
         Correo: datos.correo,
         Conductor: datos.conductor,
@@ -567,6 +571,42 @@ export async function cancelarRecepcionVacia(rec) {
     await encolar({ tipo: "removeWhere", lista: "recepciones", where: [["ID_1", "eq", rec.idn], ["Estado", "eq", "En Proceso"]] });
   }
   await kv.del(kRec(rec.idn));
+}
+
+// ---------------- consulta de recepciones cerradas ----------------
+
+export async function listarRecepcionesCerradas(dias = 7) {
+  const desde = new Date(Date.now() - dias * 86400000);
+  desde.setHours(0, 0, 0, 0);
+  return api.items("recepciones", {
+    where: [["Estado", "eq", "Finalizada"], ["HoraCierre", "ge", desde]],
+    orderby: "HoraCierre desc",
+    top: 300,
+    select: ["ID", "ID_1", "Proveedor", "Fruta", "TotalNeto", "HoraLlegada", "HoraCierre", "Bodeguero", "Correo", "EstadoAnterior"],
+  });
+}
+
+// Todo lo que el operador pasa a papel: recepción + orden + liberación +
+// pallets (los de ESTA recepción: mismo ID_N y pesados entre llegada y cierre).
+export async function detalleRecepcion(id) {
+  const rec = (await api.items("recepciones", { where: [["ID", "eq", id]], top: 1 }))[0];
+  if (!rec) return null;
+  const idn = rec.ID_1;
+  const [ordenes, libs, pallets] = await Promise.all([
+    api.items("ordenes", { where: [["OData__x0049_D2", "eq", idn]], orderby: "ID desc", top: 1 }),
+    api.items("liberaciones", { where: [["ID_1", "eq", idn]], orderby: "ID desc", top: 5 }),
+    palletsDelServidor(idn, rec.HoraLlegada),
+  ]);
+  const fin = rec.HoraCierre ? new Date(rec.HoraCierre).getTime() + 60000 : Infinity;
+  const enRango = pallets.filter((p) => !p.hora || new Date(p.hora).getTime() <= fin);
+  const pendiente = (await idb.getAll("outbox")).some((o) => o.lista === "recepciones" && o.where?.some((w) => w[0] === "ID_1" && w[2] === idn));
+  return { rec, orden: ordenes[0] || null, liberacion: libs[0] || null, liberaciones: libs, pallets: enRango, pendiente };
+}
+
+// Vuelve a disparar el flujo de correo de una recepción ya cerrada: el
+// disparador se activa con Estado = Finalizada y EstadoAnterior = En Proceso.
+export async function reenviarResumen(rec) {
+  await encolar({ tipo: "update", lista: "recepciones", id: rec.ID, campos: { EstadoAnterior: "En Proceso" } });
 }
 
 // ---------------- calidad: liberación de MP ----------------
