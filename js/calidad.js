@@ -27,7 +27,8 @@ export function render(vista) {
     const { rows, offline } = await st.listarOrdenes();
     aviso.className = offline ? "aviso" : "aviso hidden";
     aviso.textContent = offline ? "Sin conexión: lista de la última descarga." : "";
-    const pend = rows.filter((o) => o.Estado === "Programada" && (!o.Estado_calidad || o.Estado_calidad === "Pendiente"));
+    // "En Proceso" lo deja la Power App al empezar un análisis que no terminó.
+    const pend = rows.filter((o) => o.Estado === "Programada" && (!o.Estado_calidad || o.Estado_calidad === "Pendiente" || o.Estado_calidad === "En Proceso"));
     const hechas = rows.filter((o) => o.Estado === "Programada" && (o.Estado_calidad === "Liberado" || o.Estado_calidad === "Rechazado"));
     const g = st.clasificarOrdenes(pend);
     clear(lista);

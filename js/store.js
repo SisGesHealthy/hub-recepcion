@@ -611,6 +611,19 @@ export async function reenviarResumen(rec) {
 
 // ---------------- calidad: liberación de MP ----------------
 
+// ¿Existe el análisis de Calidad de esta orden? La Power App a veces marca la
+// orden "Liberado" sin crear el registro en Liberaciones (pasó con la orden
+// 30610 el 06/10): el resumen sale sin °Brix/pH/acidez. Sin red → se asume
+// que sí, para no frenar la recepción.
+export async function tieneLiberacion(orden) {
+  try {
+    const r = await api.items("liberaciones", { where: [["ID_1", "eq", idnDe(orden)]], top: 1 });
+    return r.length > 0;
+  } catch {
+    return true;
+  }
+}
+
 export async function ultimasLiberaciones(fruta, n = 3) {
   try {
     return await api.items("liberaciones", { where: [["Fruta", "eq", fruta], ["Estado", "eq", "Liberado"]], orderby: "ID desc", top: n });

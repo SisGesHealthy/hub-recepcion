@@ -89,6 +89,18 @@ function tarjetaOrden(o, local, enServidor) {
 async function iniciar(orden, btn) {
   btn.disabled = true;
   btn.textContent = "Abriendo…";
+  if (!(await st.tieneLiberacion(orden))) {
+    const seguir = await confirmar(
+      "Falta el análisis de Calidad",
+      `La orden #${st.idnDe(orden)} figura como "Liberado", pero no hay registro de liberación (°Brix, pH, acidez). El resumen al proveedor saldría sin esos datos.\n\nPide a Calidad que registre la liberación en esta app antes de recibir.`,
+      { si: "Recibir igual", no: "Esperar a Calidad", peligro: true }
+    );
+    if (!seguir) {
+      btn.disabled = false;
+      btn.textContent = "Iniciar recepción";
+      return;
+    }
+  }
   const previa = await st.recepcionPrevia(orden);
   let elegida = null;
   if (previa) {
