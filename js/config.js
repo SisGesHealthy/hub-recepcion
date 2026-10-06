@@ -16,8 +16,7 @@ export const CONFIG = {
   msal: {
     // Registro propio "Hub Recepción" en Entra ID (SPA + permiso delegado
     // SharePoint AllSites.Write con consentimiento de admin, ver README).
-    // Pendiente: pegar aquí el Id. de aplicación (cliente) cuando se registre.
-    clientId: "PENDIENTE-ID-DE-APLICACION",
+    clientId: "c1ddf8ec-9c41-4bfa-9a02-0fa51f74d328",
     authority: "https://login.microsoftonline.com/8f9b210d-f5e5-404f-9fed-a0a827154105",
     redirectUri: window.location.origin + window.location.pathname,
   },
