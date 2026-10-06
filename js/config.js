@@ -47,8 +47,8 @@ export const CONFIG = {
     "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta"],
   },
 
-  // Iniciales que hoy aparecen en Recepciones.Bodeguero.
-  bodegueros: ["AC", "BC", "BE", "CM", "JC", "JT", "WT", "XA"],
+  // Bodegueros activos (iniciales que se guardan en Recepciones.Bodeguero).
+  bodegueros: ["AC", "BC", "JT", "JC"],
   // Iniciales que hoy aparecen en Registros.Responsable de liberación.
   responsablesPlanta: ["ET", "SF", "JG"],
 
