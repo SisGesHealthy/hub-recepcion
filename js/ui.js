@@ -155,16 +155,34 @@ export function panelFirma() {
   };
 }
 
+// Texto → número aceptando coma o punto decimal ("366,5" o "366.5").
+// Con <input type="number"> algunos navegadores en español descartan la coma
+// y el campo queda vacío; por eso el campo es de texto con teclado decimal.
+export function aNumero(txt) {
+  const s = String(txt ?? "").trim().replace(/\s/g, "").replace(",", ".");
+  if (s === "" || !/^-?\d*\.?\d+$|^-?\d+\.$/.test(s)) return null;
+  return Number(s);
+}
+
 // Campo numérico grande, teclado decimal en tablet.
 export function campoNum(label, { valor = "", sufijo = "", paso = "any", id, oninput, autofocus } = {}) {
   const input = el("input", {
-    type: "number", inputmode: "decimal", step: paso, min: "0", id,
+    type: "text", inputmode: paso === "1" ? "numeric" : "decimal", autocomplete: "off", id,
     value: valor === 0 || valor ? String(valor) : "", ...(autofocus ? { autofocus: "" } : {}),
+  });
+  input.dataset.num = "1";
+  // Solo dígitos y un separador decimal (coma o punto).
+  input.addEventListener("input", () => {
+    let v = input.value.replace(/[^\d.,]/g, "");
+    if (paso === "1") v = v.split(/[.,]/)[0]; // entero: "10.5" → "10", nunca "105"
+    const i = v.search(/[.,]/);
+    if (i >= 0) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/[.,]/g, "");
+    if (v !== input.value) input.value = v;
   });
   if (oninput) input.addEventListener("input", oninput);
   input.addEventListener("focus", () => input.select());
   const wrap = el("label", { class: "campo" }, [el("span", { class: "campo-label" }, label), el("div", { class: "campo-input" }, [input, sufijo ? el("span", { class: "sufijo" }, sufijo) : null])]);
-  return { wrap, input, val: () => (input.value === "" ? null : Number(input.value)) };
+  return { wrap, input, val: () => aNumero(input.value) };
 }
 
 export function vacio(nodo, msg) {
