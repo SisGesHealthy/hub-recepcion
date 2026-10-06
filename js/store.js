@@ -232,6 +232,28 @@ export async function getRecepcionLocal(idn) {
   return kv.get(kRec(idn));
 }
 
+// Copia local de una recepción que ya no está abierta en SharePoint (se
+// finalizó o borró desde otro equipo): se descarta para no retomarla. Sin
+// red, o con cambios aún en cola, se conserva.
+export async function recepcionLocalVigente(idn) {
+  const rec = await kv.get(kRec(idn));
+  if (!rec) return null;
+  const enCola = (await idb.getAll("outbox")).some((o) =>
+    [...(o.where || []), ...(o.clave || [])].some((w) => (w[0] === "ID_1" || w[0] === "RecepcionID_Num_x002c_") && w[2] === idn) ||
+    o.campos?.RecepcionID_Num_x002c_ === idn
+  );
+  if (enCola) return rec;
+  try {
+    const abierta = await buscarUno("recepciones", [["ID_1", "eq", idn], ["Estado", "eq", "En Proceso"]]);
+    if (abierta) return rec;
+  } catch {
+    return rec;
+  }
+  for (const p of rec.pallets) if (p.fotoLocal) await idb.delete("blobs", p.fotoLocal);
+  await kv.del(kRec(idn));
+  return null;
+}
+
 export async function listarRecepcionesLocales() {
   const all = await idb.getAll("kv");
   return all.filter((x) => x.k.startsWith("rec:")).map((x) => x.v);
@@ -273,7 +295,7 @@ async function esperarColaDe(idn, maxMs = 15000) {
 // previa: resultado de recepcionPrevia() si el usuario eligió continuarla.
 export async function iniciarRecepcion(orden, previa = null) {
   const idn = idnDe(orden);
-  const existente = await getRecepcionLocal(idn);
+  const existente = await recepcionLocalVigente(idn);
   if (existente) return existente;
   await esperarColaDe(idn);
   const ahora = new Date().toISOString();

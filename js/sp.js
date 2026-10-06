@@ -21,13 +21,34 @@ function listUrl(lista) {
   return `${SITE}/_api/web/GetList('${encodeURIComponent(rel)}')`;
 }
 
+// Límite de espera: con wifi inestable una petición puede quedar colgada sin
+// error y la pantalla se quedaba en "Cargando…" para siempre. Las lecturas
+// (GET) se reintentan una vez; las escrituras no (las reintenta la cola).
+async function fetchConLimite(url, opts, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (e) {
+    throw new Error(e.name === "AbortError" ? `Sin respuesta de SharePoint en ${ms / 1000} s` : `Sin conexión con SharePoint (${e.message})`);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function spFetch(url, { method = "GET", headers = {}, body } = {}) {
   const token = await getAccessToken();
-  const res = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, Accept: JSON_NM, ...headers },
-    body,
-  });
+  const opts = { method, headers: { Authorization: `Bearer ${token}`, Accept: JSON_NM, ...headers }, body };
+  let res;
+  if (method === "GET") {
+    try {
+      res = await fetchConLimite(url, opts, 20000);
+    } catch {
+      res = await fetchConLimite(url, opts, 20000);
+    }
+  } else {
+    res = await fetchConLimite(url, opts, body instanceof Blob ? 90000 : 30000);
+  }
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     const err = new Error(`SharePoint ${method} ${res.status}: ${txt.slice(0, 300)}`);
@@ -132,7 +153,7 @@ export const api = {
   // Las imágenes de SharePoint piden el token: se bajan como blob.
   async fetchImage(url) {
     const token = await getAccessToken();
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetchConLimite(url, { headers: { Authorization: `Bearer ${token}` } }, 30000);
     if (!res.ok) throw new Error(`Imagen ${res.status}`);
     return res.blob();
   },

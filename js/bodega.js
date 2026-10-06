@@ -123,7 +123,7 @@ function elegirPrevia(previa) {
 // ---------------- recepción en proceso ----------------
 
 async function pantallaRecepcion(vista, idn) {
-  let rec = await st.getRecepcionLocal(idn);
+  let rec = await st.recepcionLocalVigente(idn);
   if (!rec) {
     const orden = (await kv.get("cache:ordenes", [])).find((o) => st.idnDe(o) === idn);
     if (!orden) {
