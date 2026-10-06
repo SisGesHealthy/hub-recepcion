@@ -2,7 +2,7 @@
 // en la bodega. Los datos viven en IndexedDB (cola de subida), no aquí.
 // "Red primero" (lección de Hub Limpieza: con "caché primero" los equipos se
 // quedaban para siempre con la primera versión del JS).
-const CACHE_NAME = "hub-recepcion-v7";
+const CACHE_NAME = "hub-recepcion-v8";
 const SHELL_FILES = [
   "./", "./index.html", "./manifest.json", "./css/styles.css", "./icons/logo.png", "./icons/icon-192.png",
   "./js/app.js", "./js/config.js", "./js/auth.js", "./js/sp.js", "./js/db.js", "./js/dom.js", "./js/ui.js",

@@ -611,17 +611,36 @@ export async function reenviarResumen(rec) {
 
 // ---------------- calidad: liberación de MP ----------------
 
-// ¿Existe el análisis de Calidad de esta orden? La Power App a veces marca la
-// orden "Liberado" sin crear el registro en Liberaciones (pasó con la orden
-// 30610 el 06/10): el resumen sale sin °Brix/pH/acidez. Sin red → se asume
-// que sí, para no frenar la recepción.
-export async function tieneLiberacion(orden) {
+// PUNTO DE CONTROL del procedimiento: Bodega solo recibe si existe el análisis
+// de Calidad (registro "Liberado" en Liberaciones). No basta con que la orden
+// diga Estado_calidad = Liberado: la Power App a veces lo marca sin crear el
+// registro (orden 30610, 06/10) y el resumen salía sin °Brix/pH/acidez.
+// Devuelve { ID_N: fecha de la última liberación }. Sin red usa la última
+// copia; si nunca se descargó queda vacío → no se habilita nada.
+export async function ordenesLiberadas() {
   try {
-    const r = await api.items("liberaciones", { where: [["ID_1", "eq", idnDe(orden)]], top: 1 });
-    return r.length > 0;
+    const rows = await api.items("liberaciones", { where: [["Estado", "eq", "Liberado"]], orderby: "ID desc", top: 400, select: ["ID_1", "Created"] });
+    const mapa = {};
+    for (const r of rows) if (!mapa[r.ID_1]) mapa[r.ID_1] = r.Created;
+    // Liberaciones hechas en este equipo y aún en cola también cuentan.
+    for (const o of await idb.getAll("outbox"))
+      if (o.lista === "liberaciones" && o.campos?.Estado === "Liberado") mapa[o.campos.ID_1] = new Date(o.creado).toISOString();
+    await kv.set("cache:liberadas", mapa);
+    return mapa;
   } catch {
-    return true;
+    return kv.get("cache:liberadas", {});
   }
+}
+
+// El ID_N se repite cada año: solo vale una liberación posterior a la orden.
+export function liberadaSegun(mapa, orden) {
+  const f = mapa[idnDe(orden)];
+  if (!f) return false;
+  return new Date(f).getTime() >= new Date(orden.Created || 0).getTime() - 86400000;
+}
+
+export async function tieneLiberacion(orden) {
+  return liberadaSegun(await ordenesLiberadas(), orden);
 }
 
 export async function ultimasLiberaciones(fruta, n = 3) {

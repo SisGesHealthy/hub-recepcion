@@ -36,7 +36,12 @@ async function pantallaOrdenes(vista) {
   );
 
   async function cargar() {
-    const [{ rows, offline }, enProceso, locales] = await Promise.all([st.listarOrdenes(), st.recepcionesEnProceso(), st.listarRecepcionesLocales()]);
+    const [{ rows, offline }, enProceso, locales, liberadas] = await Promise.all([
+      st.listarOrdenes(),
+      st.recepcionesEnProceso(),
+      st.listarRecepcionesLocales(),
+      st.ordenesLiberadas(),
+    ]);
     const localPorIdn = new Map(locales.map((r) => [r.idn, r]));
     aviso.className = offline ? "aviso" : "aviso hidden";
     aviso.textContent = offline ? "Sin conexión: mostrando la última lista descargada. Lo que registres se sube al volver la señal." : "";
@@ -44,7 +49,7 @@ async function pantallaOrdenes(vista) {
     const g = st.clasificarOrdenes(vivas);
     clear(lista);
     if (!vivas.length) return vacio(lista, "No hay órdenes programadas.");
-    const tarjeta = (o) => tarjetaOrden(o, localPorIdn.get(st.idnDe(o)), enProceso.has(st.idnDe(o)));
+    const tarjeta = (o) => tarjetaOrden(o, localPorIdn.get(st.idnDe(o)), enProceso.has(st.idnDe(o)), st.liberadaSegun(liberadas, o));
     if (g.hoy.length) lista.append(el("h3", { class: "grupo" }, `Hoy · ${g.hoy.length}`), ...g.hoy.map(tarjeta));
     if (g.proximas.length) lista.append(el("h3", { class: "grupo" }, `Próximas · ${g.proximas.length}`), ...g.proximas.map(tarjeta));
     if (g.atrasadas.length) {
@@ -61,15 +66,18 @@ async function pantallaOrdenes(vista) {
   timer = setInterval(() => document.body.contains(lista) && cargar(), 45000);
 }
 
-function tarjetaOrden(o, local, enServidor) {
+function tarjetaOrden(o, local, enServidor, liberada) {
   const cal = o.Estado_calidad || "Pendiente";
   const idn = st.idnDe(o);
   let accion;
   if (local || enServidor) {
     const n = local?.pallets.length;
     accion = el("a", { class: "btn btn-azul", href: `#/bodega/rec/${idn}` }, n ? `Continuar · ${n} pallet${n > 1 ? "s" : ""}` : "Continuar recepción");
-  } else if (cal === "Liberado") {
+  } else if (cal === "Liberado" && liberada) {
     accion = el("button", { class: "btn btn-verde", onclick: (e) => iniciar(o, e.currentTarget) }, "Iniciar recepción");
+  } else if (cal === "Liberado") {
+    // Punto de control: sin registro del análisis no se recibe.
+    accion = el("span", { class: "estado estado-ambar", title: "La orden dice Liberado pero no hay registro de °Brix/pH/acidez en Liberaciones" }, "Falta registrar el análisis de Calidad");
   } else if (cal === "Rechazado") {
     accion = el("span", { class: "estado estado-rojo" }, "Rechazada por Calidad");
   } else {
@@ -90,16 +98,10 @@ async function iniciar(orden, btn) {
   btn.disabled = true;
   btn.textContent = "Abriendo…";
   if (!(await st.tieneLiberacion(orden))) {
-    const seguir = await confirmar(
-      "Falta el análisis de Calidad",
-      `La orden #${st.idnDe(orden)} figura como "Liberado", pero no hay registro de liberación (°Brix, pH, acidez). El resumen al proveedor saldría sin esos datos.\n\nPide a Calidad que registre la liberación en esta app antes de recibir.`,
-      { si: "Recibir igual", no: "Esperar a Calidad", peligro: true }
-    );
-    if (!seguir) {
-      btn.disabled = false;
-      btn.textContent = "Iniciar recepción";
-      return;
-    }
+    toast("Falta registrar el análisis de Calidad: no se puede recibir", "err");
+    btn.disabled = false;
+    btn.textContent = "Iniciar recepción";
+    return;
   }
   const previa = await st.recepcionPrevia(orden);
   let elegida = null;
@@ -151,6 +153,11 @@ async function pantallaRecepcion(vista, idn) {
     // cerrada de esta orden, preguntar si se continúa.
     let previa = null;
     if (!(await st.recepcionesEnProceso()).has(idn)) {
+      // Entrar por URL o por un "Continuar" ya vencido no salta el control.
+      if (!(await st.tieneLiberacion(orden))) {
+        vacio(vista, `No se puede recibir la orden #${idn}: falta registrar el análisis de Calidad.`);
+        return;
+      }
       previa = await st.recepcionPrevia(orden);
       if (previa) {
         const elegida = await elegirPrevia(previa);
