@@ -27,6 +27,11 @@ async function main() {
     const auth = await import("./auth.js");
     const acc = await auth.initAuth();
     if (!acc) return pantallaLogin(auth);
+    try {
+      if (!(await auth.asegurarToken())) return; // redirigiendo a Microsoft
+    } catch (e) {
+      return pantallaLogin(auth, e.message);
+    }
     setUsuario(acc.name, acc.username);
   }
   await initStore();
@@ -36,12 +41,13 @@ async function main() {
   if ("serviceWorker" in navigator && !CONFIG.useMock) navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
-function pantallaLogin(auth) {
+function pantallaLogin(auth, error) {
   clear(vista);
   vista.appendChild(
     el("div", { class: "login" }, [
       el("img", { src: "icons/logo.png", class: "login-logo", alt: "Healthy Food" }),
       el("h1", {}, "Recepción y Liberación"),
+      error ? el("div", { class: "aviso" }, error) : null,
       el("p", {}, "Inicia sesión con la cuenta Microsoft del puesto (bodega o calidad)."),
       el("button", { class: "btn btn-verde btn-xl", onclick: () => auth.login() }, "Iniciar sesión"),
     ])
