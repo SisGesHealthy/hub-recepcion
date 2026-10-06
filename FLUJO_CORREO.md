@@ -28,6 +28,27 @@ Abrir la **copia**.
    cambia `EstadoAnterior` a "Finalizada" unos segundos después, así que el correo sale
    **una sola vez**.
 
+## 1-b. Evitar correos duplicados (obligatorio)
+Varias escrituras seguidas en la misma recepción pueden hacer que Power Automate arranque el
+flujo **dos veces** con el mismo dato. Para que la segunda ejecución no envíe nada:
+
+1. Disparador → **Configuración** → **Control de simultaneidad: Activado**, **Grado de
+   paralelismo: 1**. Las ejecuciones van una detrás de otra, nunca al mismo tiempo.
+2. Justo debajo del disparador, antes de "Orden":
+   - **Obtener elemento** (SharePoint) → nombre **Actual** · Lista *Recepciones* · Id: `ID` del
+     disparador.
+   - **Condición**: `@{body('Actual')?['EstadoAnterior']}` **es igual a** `En Proceso`.
+     - **Si no** → **Finalizar** (Terminate) con estado **Correcto**. Es un duplicado: no hace nada.
+     - **Si sí** → primera acción: **Actualizar elemento** (SharePoint) · Lista *Recepciones* · Id:
+       `ID` del disparador · **EstadoAnterior** = `Notificado`. Deja Estado = `Finalizada`
+       (en "Actualizar elemento" hay que volver a poner los campos obligatorios). Después van
+       todas las demás acciones (Orden, Liberacion, Pallets…, Redactar y los correos).
+3. Si se había agregado el paso 6 (Actualizar EstadoAnterior = Finalizada al final), ya no hace
+   falta: se puede eliminar.
+
+Así, la primera ejecución marca la recepción como "Notificado" antes de enviar, y la segunda la
+encuentra ya marcada y termina sin enviar.
+
 ## 2. Acciones nuevas (entre el disparador y las dos ramas)
 Agregarlas **en este orden, una debajo de otra**, antes de que el flujo se divida:
 

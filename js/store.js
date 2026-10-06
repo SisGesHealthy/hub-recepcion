@@ -97,9 +97,12 @@ async function ejecutar(op) {
   } else if (op.tipo === "update" || op.tipo === "updateWhere") {
     const id = op.tipo === "update" ? op.id : (await buscarUno(op.lista, op.where))?.ID;
     if (!id) throw Object.assign(new Error(`No se encontró en ${op.lista} el registro a actualizar.`), { status: 404 });
-    if (op.campos) await api.update(op.lista, id, op.campos);
+    // Imagen primero y luego UNA sola escritura con todos los campos: cada
+    // escritura dispara un aviso al flujo de Power Automate, y varias seguidas
+    // en el mismo segundo pueden hacer que el correo salga dos veces.
     if (op.foto && blob) await api.attachImage(op.lista, id, op.foto.campo, blob, op.foto.ext);
-    if (op.camposFinales) await api.update(op.lista, id, op.camposFinales);
+    const todos = { ...(op.campos || {}), ...(op.camposFinales || {}) };
+    if (Object.keys(todos).length) await api.update(op.lista, id, todos);
   } else if (op.tipo === "removeWhere") {
     const it = await buscarUno(op.lista, op.where);
     if (it) await api.remove(op.lista, it.ID);
