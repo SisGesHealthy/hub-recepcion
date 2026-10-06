@@ -11,7 +11,7 @@
 //                  registro de Entra, ver README.md).
 
 export const CONFIG = {
-  useMock: true,
+  useMock: false,
 
   msal: {
     // Registro propio "Hub Recepción" en Entra ID (SPA + permiso delegado
