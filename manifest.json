@@ -1,7 +1,7 @@
 {
   "name": "Recepción y Liberación · Healthy Food",
   "short_name": "Recepción",
-  "start_url": "./index.html",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#f5f7f0",
   "theme_color": "#849e4d",

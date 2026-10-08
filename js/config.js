@@ -19,7 +19,10 @@ export const CONFIG = {
     // SharePoint AllSites.Write con consentimiento de admin, ver README).
     clientId: "c1ddf8ec-9c41-4bfa-9a02-0fa51f74d328",
     authority: "https://login.microsoftonline.com/8f9b210d-f5e5-404f-9fed-a0a827154105",
-    redirectUri: window.location.origin + window.location.pathname,
+    // Siempre la carpeta, sin "index.html": instalada en el celular la app
+    // abre como .../hub-recepcion/index.html y Entra solo tiene registrada
+    // .../hub-recepcion/ (error AADSTS50011).
+    redirectUri: window.location.origin + window.location.pathname.replace(/index\.html$/, ""),
   },
 
   sp: {
