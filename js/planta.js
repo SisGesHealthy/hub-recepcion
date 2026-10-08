@@ -1,54 +1,204 @@
-// Calidad - Planta: liberación de producto en proceso por parada.
-// Lotes (lista Lotes) → mediciones (lista Registros) comparadas en vivo con
-// los rangos del producto (lista Catalogo-Parametros-Liberacion, que hoy ya
-// tiene °Brix/pH/acidez/ratio mín-máx pero nadie los ve al registrar).
+// Calidad - Planta: liberación de producto en proceso.
+// Del día de producción: órdenes de fabricación de Odoo (archivo cifrado que
+// exporta scripts/exportar_of.py) → lotes que Calidad asigna a cada OF (lista
+// Lotes, una OF puede dividirse en varios lotes con su propia fecha de
+// elaboración) → mediciones por parada (lista Registros) comparadas en vivo con
+// los rangos del producto (lista Catalogo-Parametros-Liberacion).
 
 import { CONFIG } from "./config.js";
 import { el, clear } from "./dom.js";
 import * as st from "./store.js";
 import { kv } from "./db.js";
-import { toast, campoNum, vacio, confirmar } from "./ui.js";
+import { toast, campoNum, vacio, confirmar, hoja } from "./ui.js";
 
 export async function render(vista, resto) {
   const cat = await st.catalogo();
   const prodDe = (lote) => cat.find((c) => c.ID === lote.Producto_x002d_CODId) || null;
   if (resto[0] === "lote" && resto[1]) return pantallaLote(vista, Number(resto[1]), prodDe);
-  return pantallaLotes(vista, prodDe);
+  const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
+  return pantallaDia(vista, dia, cat);
 }
 
-async function pantallaLotes(vista, prodDe) {
-  const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Cargando lotes…"));
+// ---------------- día de producción ----------------
+
+async function pantallaDia(vista, dia, cat) {
+  const porCodigo = (codigo) => cat.find((c) => (c.Title || "").trim().toUpperCase() === (codigo || "").trim().toUpperCase()) || null;
+  const ir = (d) => (location.hash = `#/planta/${d}`);
+  const fechaInp = el("input", { type: "date", class: "dias", value: dia, onchange: (e) => e.target.value && ir(e.target.value) });
+  const estadoOdoo = el("p", { class: "sub" });
+  const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Cargando producción…"));
   vista.append(
     el("div", { class: "cab" }, [
-      el("div", {}, [el("h1", { class: "titulo" }, "Liberación en proceso"), el("p", { class: "sub" }, `Lotes abiertos de los últimos ${CONFIG.diasLotes} días`)]),
-      el("button", { class: "btn btn-sec", onclick: () => cargar() }, "↻ Actualizar"),
+      el("div", {}, [el("h1", { class: "titulo" }, "Liberación en proceso"), estadoOdoo]),
+      el("div", { class: "cab-botones" }, [
+        el("button", { class: "btn btn-sec", title: "Día anterior", onclick: () => ir(st.sumarDias(dia, -1)) }, "‹"),
+        fechaInp,
+        el("button", { class: "btn btn-sec", title: "Día siguiente", onclick: () => ir(st.sumarDias(dia, 1)) }, "›"),
+        dia !== st.hoyISO() ? el("button", { class: "btn btn-sec", onclick: () => ir(st.hoyISO()) }, "Hoy") : null,
+        el("button", { class: "btn btn-sec", title: "Actualizar", onclick: () => cargar() }, "↻"),
+      ]),
     ]),
     lista
   );
+
   async function cargar() {
-    const lotes = await st.listarLotes();
+    lista.replaceChildren(el("div", { class: "cargando" }, "Cargando producción…"));
+    const [datos, { lotes, prop }] = await Promise.all([st.cargarOF(), st.lotesDelDia(dia)]);
+    const ofs = (datos.ofs || []).filter((o) => o.fecha === dia);
+    const edad = datos.generado ? (Date.now() - new Date(datos.generado).getTime()) / 3600000 : null;
+    clear(estadoOdoo);
+    estadoOdoo.append(`Producción del ${st.fmtDia(dia)} · ${ofs.length} ${ofs.length === 1 ? "orden" : "órdenes"} de Odoo`);
+    if (datos.generado) estadoOdoo.append(` · Odoo actualizado ${st.fmtFecha(datos.generado)}`);
     clear(lista);
-    if (!lotes.length) return vacio(lista, "No hay lotes programados recientes.");
-    for (const l of lotes) {
-      const p = prodDe(l);
-      lista.appendChild(
-        el("a", { class: "orden lote", href: `#/planta/lote/${l.ID}` }, [
-          el("div", { class: "orden-info" }, [
-            el("strong", { class: "orden-prov" }, l.Title),
-            el("span", { class: "orden-fruta" }, p ? `${p.Title} · ${p.field_1}` : "Producto sin catálogo"),
-            el("span", { class: "orden-fecha" }, `Producción ${st.fmtFecha(l.Fechadeproducci_x00f3_n, false)}`),
-          ]),
-          el("div", { class: "orden-accion" }, el("span", { class: "btn btn-verde" }, "Registrar parada")),
-        ])
-      );
+    if (datos.error) lista.appendChild(el("div", { class: "aviso" }, datos.error));
+    else if (edad !== null && edad > CONFIG.of.horasVigencia)
+      lista.appendChild(el("div", { class: "aviso" }, `Los datos de Odoo tienen ${Math.floor(edad)} h: puede faltar alguna orden creada después. Se actualizan solos cada hora.`));
+
+    const usados = new Set();
+    for (const o of ofs) {
+      const suyos = lotes.filter((l) => prop && (l[prop] || "") === o.of);
+      suyos.forEach((l) => usados.add(l));
+      lista.appendChild(tarjetaOF(o, suyos, porCodigo(o.codigo), dia, cargar));
+    }
+    if (!ofs.length && !datos.error)
+      lista.appendChild(el("div", { class: "vacio chico" }, "Odoo no tiene órdenes de fabricación con esta fecha de producción."));
+
+    const otros = lotes.filter((l) => !usados.has(l));
+    if (otros.length) {
+      lista.appendChild(el("h3", { class: "grupo" }, `Otros lotes del día (sin orden de Odoo) · ${otros.length}`));
+      for (const l of otros) lista.appendChild(filaLote(l, cat.find((c) => c.ID === l.Producto_x002d_CODId), dia, cargar, true));
     }
   }
   cargar();
 }
 
+function tarjetaOF(o, lotes, prod, dia, recargar) {
+  const nuevo = (dividir) => formLote({ of: o, prod, dia, dividir, lotes, recargar });
+  return el("article", { class: `orden of-card ${lotes.length ? "con-lote" : "sin-lote"}` }, [
+    el("div", { class: "of-cab" }, [
+      el("div", { class: "orden-info" }, [
+        el("strong", { class: "orden-prov" }, `${o.codigo} · ${o.producto}`),
+        el("span", { class: "orden-fecha" }, `${o.of} · ${st.fmtKg(o.cantidad)} ${o.unidad} · ${o.estado}${o.lote_odoo ? ` · lote en Odoo: ${o.lote_odoo}` : ""}`),
+        !prod ? el("span", { class: "sin-rango" }, "Producto sin rangos en el catálogo de liberación") : null,
+      ]),
+      el(
+        "div",
+        { class: "orden-accion" },
+        lotes.length
+          ? el("button", { class: "btn btn-sec", onclick: () => nuevo(true) }, "+ Dividir en otro lote")
+          : el("button", { class: "btn btn-verde", onclick: () => nuevo(false) }, "Asignar lote")
+      ),
+    ]),
+    lotes.length ? el("div", { class: "of-lotes" }, lotes.map((l) => filaLote(l, prod, dia, recargar))) : null,
+  ]);
+}
+
+function filaLote(l, prod, dia, recargar, conProducto = false) {
+  const elab = st.diaISO(l.field_2);
+  return el("div", { class: "of-lote" }, [
+    el("div", { class: "orden-info" }, [
+      el("strong", {}, l.Title + (l.pendiente ? " ↻" : "")),
+      el("span", { class: "orden-fecha" }, [
+        conProducto && prod ? `${prod.Title} · ` : "",
+        `Elab. ${st.fmtDia(elab)}${elab !== dia ? " (otra fecha)" : ""} · Cad. ${st.fmtDia(st.diaISO(l.field_3))}`,
+        l.field_4 === "Finalizado" ? " · Cerrado" : "",
+      ]),
+    ]),
+    l.ID
+      ? el("div", { class: "fila-botones of-lote-btns" }, [
+          el("button", { class: "btn btn-sec", title: "Corregir código o fechas", onclick: () => formLote({ lote: l, prod, dia, recargar }) }, "✎"),
+          el("a", { class: "btn btn-verde", href: `#/planta/lote/${l.ID}` }, "Registrar parada"),
+        ])
+      : el("span", { class: "estado estado-ambar" }, "Subiendo…"),
+  ]);
+}
+
+// Asignar / dividir / corregir lote. Fecha de elaboración = fecha de
+// producción, salvo al dividir (un lote para completar otro día). Caducidad
+// siempre a mano; se muestra la vida útil del último lote como referencia.
+async function formLote({ of, prod, dia, dividir = false, lotes = [], lote = null, recargar }) {
+  const editando = !!lote;
+  // Base para sugerir: al dividir, el lote que ya tiene esta OF; si no, el
+  // último lote del producto.
+  const previo = editando ? null : dividir && lotes.length ? lotes[lotes.length - 1] : await st.ultimoLoteDeProducto(prod?.ID);
+  const elabInicial = editando ? st.diaISO(lote.field_2) : dia;
+  let sugerido = "";
+  let origen = "";
+  if (!editando) {
+    if (of?.lote_odoo && !dividir && !/^\d+$/.test(of.lote_odoo)) {
+      sugerido = of.lote_odoo;
+      origen = "Lote que ya tiene la orden en Odoo";
+    } else if (previo) {
+      sugerido = st.sugerirCodigoLote(previo, elabInicial) || "";
+      origen = sugerido ? `Según ${dividir ? "el lote de esta orden" : "el último lote de este producto"}: ${previo.Title}` : "";
+    }
+  }
+  const codigo = el("input", { type: "text", value: editando ? lote.Title : sugerido, placeholder: "Código de lote", autocomplete: "off" });
+  const elab = el("input", { type: "date", value: elabInicial, ...(dividir || editando ? {} : { disabled: "" }) });
+  const cad = el("input", { type: "date", value: editando ? st.diaISO(lote.field_3) : "" });
+  const vida = el("div", { class: "nota" });
+  const ref = previo?.field_2 && previo?.field_3 ? Math.round((new Date(previo.field_3) - new Date(previo.field_2)) / 86400000) : null;
+  const meses = (dias) => (dias / 30.44).toFixed(1).replace(".0", "");
+  const pintarVida = () => {
+    clear(vida);
+    if (ref !== null) vida.append(`Último lote de este producto: elab. ${st.fmtDia(st.diaISO(previo.field_2))} → cad. ${st.fmtDia(st.diaISO(previo.field_3))} (${ref} días ≈ ${meses(ref)} meses). `);
+    if (cad.value && elab.value) {
+      const d = Math.round((new Date(cad.value) - new Date(elab.value)) / 86400000);
+      vida.append(el("b", { class: d <= 0 || (ref !== null && Math.abs(d - ref) > 31) ? "texto-rojo" : "" }, `Este lote: ${d} días ≈ ${meses(d)} meses.`));
+    }
+  };
+  cad.addEventListener("input", pintarVida);
+  elab.addEventListener("input", () => {
+    // Al dividir, si cambia la elaboración se vuelve a sugerir el código.
+    if (dividir && previo && !codigo.dataset.tocado) codigo.value = st.sugerirCodigoLote(previo, elab.value) || codigo.value;
+    pintarVida();
+  });
+  codigo.addEventListener("input", () => (codigo.dataset.tocado = "1"));
+  pintarVida();
+
+  const btn = el("button", { class: "btn btn-verde btn-xl" }, editando ? "Guardar cambios" : "Confirmar lote");
+  const titulo = editando ? `Corregir lote ${lote.Title}` : dividir ? "Dividir en otro lote" : "Asignar lote";
+  const h = hoja(titulo, [
+    el("p", { class: "sub" }, of ? `${of.of} · ${of.codigo} · ${of.producto}` : prod ? `${prod.Title} · ${prod.field_1}` : ""),
+    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Código de lote"), codigo, origen ? el("span", { class: "sugerido" }, `Sugerido — revísalo. ${origen}`) : null]),
+    el("div", { class: "campos-2" }, [
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, dividir ? "Fecha de elaboración (de este lote)" : "Fecha de elaboración"), elab]),
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Fecha de caducidad"), cad]),
+    ]),
+    !dividir && !editando ? el("p", { class: "nota" }, "La elaboración es la fecha de producción. Para un lote de otra fecha usa “Dividir en otro lote”.") : null,
+    vida,
+    btn,
+  ]);
+  setTimeout(() => (sugerido ? cad : codigo).focus(), 250);
+
+  btn.addEventListener("click", async () => {
+    const c = codigo.value.trim().toUpperCase().replace(/\s+/g, " ");
+    if (!c) return toast("Escribe el código de lote", "err");
+    if (!cad.value) return toast("Escribe la fecha de caducidad", "err");
+    if (cad.value <= elab.value) return toast("La caducidad debe ser posterior a la elaboración", "err");
+    if (!editando && lotes.some((l) => (l.Title || "").toUpperCase() === c)) return toast(`El lote ${c} ya está asignado a esta orden`, "err");
+    const d = Math.round((new Date(cad.value) - new Date(elab.value)) / 86400000);
+    if (ref !== null && Math.abs(d - ref) > 31) {
+      const ok = await confirmar("Revisa la caducidad", `Este lote dura ${d} días (≈ ${meses(d)} meses) y el último de este producto duraba ${ref} días (≈ ${meses(ref)} meses). ¿Es correcto?`, { si: "Sí, es correcto", no: "Corregir" });
+      if (!ok) return;
+    }
+    btn.disabled = true;
+    if (editando) await st.editarLote(lote, { codigo: c, fechaElab: elab.value, fechaCad: cad.value });
+    else await st.crearLote({ codigo: c, of: of?.of, fechaProduccion: dia, fechaElab: elab.value, fechaCad: cad.value, catId: prod?.ID });
+    h.cerrar();
+    toast(editando ? "Lote actualizado" : `Lote ${c} asignado`);
+    setTimeout(recargar, 600);
+  });
+}
+
+// ---------------- lote: registro de paradas ----------------
+
 async function pantallaLote(vista, id, prodDe) {
-  const lote = (await kv.get("cache:lotes", [])).find((l) => l.ID === id);
-  if (!lote) return vacio(vista, "Lote no encontrado. Vuelve a la lista.");
+  let lote = null;
+  try {
+    lote = await st.getLote(id);
+  } catch {}
+  if (!lote) return vacio(vista, "Lote no encontrado (sin conexión o eliminado). Vuelve a la lista.");
   const prod = prodDe(lote);
   const tabla = el("div", { class: "paradas" });
   let paradas = [];
@@ -176,7 +326,7 @@ async function pantallaLote(vista, id, prodDe) {
 
   vista.append(
     el("section", { class: "rec-cab" }, [
-      el("a", { href: "#/planta", class: "volver" }, "← Lotes"),
+      el("a", { href: `#/planta/${st.diaISO(lote.Fechadeproducci_x00f3_n) || ""}`, class: "volver" }, "← Producción del día"),
       el("div", { class: "rec-titulo" }, [el("h1", {}, lote.Title), el("span", {}, prod ? `${prod.Title} · ${prod.field_1}` : "")]),
       especif,
     ]),
@@ -191,7 +341,7 @@ async function pantallaLote(vista, id, prodDe) {
             if (await confirmar("Cerrar lote", `${lote.Title} pasa a "Finalizado" y deja de aparecer en la lista.`, { si: "Cerrar lote" })) {
               await st.cerrarLote(lote);
               toast("Lote cerrado");
-              location.hash = "#/planta";
+              location.hash = `#/planta/${st.diaISO(lote.Fechadeproducci_x00f3_n) || ""}`;
             }
           },
         }, "Cerrar lote")),

@@ -689,6 +689,133 @@ export async function catalogo() {
   }
 }
 
+// ---- Órdenes de fabricación de Odoo (archivo cifrado junto a la app) ----
+
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+async function descifrar(sobre, claveB64) {
+  const key = await crypto.subtle.importKey("raw", b64(claveB64), "AES-GCM", false, ["decrypt"]);
+  const plano = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(sobre.iv) }, key, b64(sobre.data));
+  return JSON.parse(new TextDecoder().decode(plano));
+}
+
+// { generado, ofs:[{of, fecha, codigo, producto, cantidad, unidad, estado, lote_odoo}], error? }
+export async function cargarOF() {
+  if (CONFIG.useMock) return (await import("./mock.js")).ofsDemo();
+  try {
+    const sobre = await (await fetch(`${CONFIG.of.datos}?t=${Date.now()}`, { cache: "no-store" })).json();
+    let clave = await kv.get("of:clave");
+    let datos;
+    try {
+      if (!clave) throw new Error("sin clave");
+      datos = await descifrar(sobre, clave);
+    } catch {
+      // Clave nueva o aún no descargada: se pide a SharePoint (solo con sesión).
+      clave = await api.leerTexto(CONFIG.of.clave);
+      datos = await descifrar(sobre, clave);
+      await kv.set("of:clave", clave);
+    }
+    await kv.set("cache:of", datos);
+    return datos;
+  } catch (e) {
+    console.warn("OF de Odoo:", e);
+    const cache = await kv.get("cache:of");
+    const msg = e.status === 404 ? "No se encontró la clave en SharePoint (Documentos compartidos/HubRecepcion/clave_of.txt)." : "No se pudieron leer las órdenes de Odoo.";
+    return cache ? { ...cache, error: msg + " Se muestra la última copia." } : { ofs: [], error: msg };
+  }
+}
+
+// ---- fechas "solo día" (Ecuador, UTC-5; SharePoint guarda medianoche local = 05:00Z) ----
+
+export const hoyISO = () => new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+export const diaISO = (iso) => (iso ? new Date(iso).toLocaleDateString("en-CA", { timeZone: TZ }) : "");
+export const diaASP = (d) => new Date(`${d}T00:00:00-05:00`).toISOString();
+export function sumarDias(d, n) {
+  const x = new Date(`${d}T12:00:00-05:00`);
+  x.setUTCDate(x.getUTCDate() + n);
+  return x.toLocaleDateString("en-CA", { timeZone: TZ });
+}
+export function diaDelAnio(d) {
+  const [y, m, dd] = d.split("-").map(Number);
+  return Math.round((Date.UTC(y, m - 1, dd) - Date.UTC(y, 0, 1)) / 86400000) + 1;
+}
+export const fmtDia = (d) => (d ? d.split("-").reverse().join("/") : "");
+
+let propOF = null;
+async function campoOF() {
+  if (propOF === null) propOF = (await api.propiedadDeCampo("lotes", CONFIG.of.columnaLotes)) || "";
+  return propOF;
+}
+
+// Lotes con fecha de producción = ese día (cualquier estado) + nombre de la
+// propiedad de la columna OF, para agrupar por orden.
+export async function lotesDelDia(d) {
+  const prop = await campoOF();
+  try {
+    const rows = await api.items("lotes", {
+      where: [["Fechadeproducci_x00f3_n", "ge", new Date(diaASP(d))], ["Fechadeproducci_x00f3_n", "lt", new Date(diaASP(sumarDias(d, 1)))]],
+      orderby: "ID asc",
+      top: 500,
+    });
+    const pend = (await idb.getAll("outbox")).filter((o) => o.lista === "lotes" && o.tipo === "add" && diaISO(o.campos.Fechadeproducci_x00f3_n) === d).map((o) => ({ ...o.campos, ID: null, pendiente: true }));
+    const todos = [...rows, ...pend.filter((p) => !rows.some((r) => r.Title === p.Title && (r[prop] || "") === (p[prop] || "")))];
+    await kv.set(`cache:lotes:${d}`, todos);
+    return { lotes: todos, prop };
+  } catch {
+    return { lotes: await kv.get(`cache:lotes:${d}`, []), prop };
+  }
+}
+
+export async function getLote(id) {
+  const r = await api.items("lotes", { where: [["ID", "eq", id]], top: 1 });
+  return r[0] || null;
+}
+
+// Último lote del mismo producto (para sugerir código y mostrar su vida útil).
+export async function ultimoLoteDeProducto(catId) {
+  if (!catId) return null;
+  try {
+    return (await api.items("lotes", { where: [["Producto_x002d_CODId", "eq", catId]], orderby: "ID desc", top: 1 }))[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+// Regla del código: el último lote del producto con su día del año y año
+// cambiados por los de la nueva fecha de elaboración.
+//   L2642615 (elab. 21/09 = día 264) → L2782615 para el 05/10 (día 278)
+//   HF PB 265 26 → HF PB 278 26
+export function sugerirCodigoLote(prev, fechaElab) {
+  if (!prev?.Title || !prev.field_2) return null;
+  const pd = diaISO(prev.field_2);
+  const viejo = [String(diaDelAnio(pd)).padStart(3, "0"), pd.slice(2, 4)];
+  const nuevo = [String(diaDelAnio(fechaElab)).padStart(3, "0"), fechaElab.slice(2, 4)];
+  const re = new RegExp(`${viejo[0]}(\\s?)${viejo[1]}`);
+  if (!re.test(prev.Title)) return null;
+  return prev.Title.replace(re, `${nuevo[0]}$1${nuevo[1]}`);
+}
+
+export async function crearLote({ codigo, of, fechaProduccion, fechaElab, fechaCad, catId }) {
+  const prop = await campoOF();
+  const campos = {
+    Title: codigo,
+    field_2: diaASP(fechaElab),
+    field_3: diaASP(fechaCad),
+    field_4: "Programado",
+    Fechadeproducci_x00f3_n: diaASP(fechaProduccion),
+    ...(catId ? { Producto_x002d_CODId: catId } : {}),
+    ...(prop && of ? { [prop]: of } : {}),
+  };
+  const clave = [["Title", "eq", codigo], ["Fechadeproducci_x00f3_n", "eq", new Date(diaASP(fechaProduccion))]];
+  if (prop && of) clave.push([prop, "eq", of]);
+  await encolar({ tipo: "add", lista: "lotes", clave, campos });
+  return campos;
+}
+
+export async function editarLote(lote, { codigo, fechaElab, fechaCad }) {
+  await encolar({ tipo: "update", lista: "lotes", id: lote.ID, campos: { Title: codigo, field_2: diaASP(fechaElab), field_3: diaASP(fechaCad) } });
+}
+
 export async function listarLotes() {
   const desde = new Date(Date.now() - CONFIG.diasLotes * 86400000);
   desde.setHours(0, 0, 0, 0);

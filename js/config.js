@@ -57,6 +57,16 @@ export const CONFIG = {
   diasAtraso: 2,
   // Lotes de planta visibles: producidos en los últimos N días y sin cerrar.
   diasLotes: 5,
+
+  // Órdenes de fabricación de Odoo (Calidad - Planta). Las exporta cada hora
+  // scripts/exportar_of.py (GitHub Actions) CIFRADAS junto a la app; la clave
+  // vive en SharePoint, así solo un usuario con sesión puede leerlas.
+  of: {
+    datos: "data/of_produccion.json",
+    clave: "/sites/EspacioColaborativo/Documentos compartidos/HubRecepcion/clave_of.txt",
+    columnaLotes: "OrdenFabricacion", // columna agregada a la lista Lotes
+    horasVigencia: 3, // más viejo que esto → aviso "datos de Odoo desactualizados"
+  },
   // Aviso si el neto recibido se aleja de lo programado más que esto.
   toleranciaCantidad: 0.1,
 

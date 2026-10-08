@@ -59,11 +59,23 @@ copia en `Liberaciones.ID_1`, `PalletsRecepcion.RecepcionID` y `Recepciones.ID_1
 - Avisa ante valores imposibles (pH 31 en vez de 3,1). El rechazo exige un motivo.
 
 **Calidad - Planta (producto en proceso)**
-- Solo muestra los lotes de los últimos 5 días. Hoy los 269 lotes siguen en "Programado"
-  porque nunca se cierran; ahora hay un botón **Cerrar lote**.
-- Los rangos del producto (que ya existen en Catalogo-Parametros-Liberacion) se muestran
-  y cada campo se pone verde o rojo mientras se escribe. El ratio se calcula solo.
-- El número de parada se asigna solo y la marca *Repetición* conserva el número anterior.
+- Muestra la **producción del día** (filtro de fecha, por defecto hoy): las órdenes de fabricación
+  de Odoo con esa *Fecha de producción* (`production_date`), con producto, código, cantidad y estado.
+- **Asignar lote** a cada OF: código prellenado (el lote que ya tenga la OF en Odoo, o el último
+  lote del producto con el día del año y el año de la nueva fecha: L2642615 → L2782615,
+  HF PB 265 26 → HF PB 278 26) que Calidad confirma o edita. Elaboración = fecha de producción.
+  Caducidad siempre a mano, con la vida útil del último lote como referencia y aviso si difiere.
+- **Dividir en otro lote**: la misma OF en varios lotes; ahí la fecha de elaboración es editable
+  (lote para completar otro día). Cada lote guarda su OF en la columna `OrdenFabricacion`.
+- Rangos del catálogo en verde/rojo al registrar cada parada, ratio y número de parada automáticos.
+
+### Órdenes de fabricación de Odoo
+`scripts/exportar_of.py` corre cada hora de 05:00 a 20:00 (GitHub Actions,
+`.github/workflows/of_produccion.yml`) y publica `data/of_produccion.json` **cifrado**
+(AES-256-GCM) junto a la app: el repositorio es público. La app lo descifra con la clave guardada
+en SharePoint (`Documentos compartidos/HubRecepcion/clave_of.txt`), que solo leen usuarios con
+sesión. Secrets del repositorio: `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_PASS`, `OF_KEY`
+(= contenido de clave_of.txt). Si cambia la contraseña de Odoo, actualizar `ODOO_PASS` aquí también.
 
 ## Puesta en marcha (una sola vez)
 

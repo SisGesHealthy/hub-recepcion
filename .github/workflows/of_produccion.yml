@@ -1,0 +1,49 @@
+name: OF de producción (Odoo → Calidad - Planta)
+
+on:
+  schedule:
+    # Cada hora de 05:00 a 20:00 Ecuador (UTC-5) = 10:00 a 01:00 UTC.
+    # Las OF se crean y confirman durante el día; una sola corrida diaria
+    # dejaría fuera las de la tarde.
+    - cron: '0 10-23 * * *'
+    - cron: '0 0-1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: of-produccion
+  cancel-in-progress: false
+
+jobs:
+  exportar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        run: pip install cryptography
+
+      - name: Exportar OF de Odoo (cifrado)
+        env:
+          ODOO_URL:  ${{ secrets.ODOO_URL }}
+          ODOO_DB:   ${{ secrets.ODOO_DB }}
+          ODOO_USER: ${{ secrets.ODOO_USER }}
+          ODOO_PASS: ${{ secrets.ODOO_PASS }}
+          OF_KEY:    ${{ secrets.OF_KEY }}
+        run: python scripts/exportar_of.py
+
+      - name: Publicar
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/of_produccion.json
+          git diff --cached --quiet && exit 0
+          git commit -m "datos: OF de producción $(TZ=America/Guayaquil date '+%d/%m %H:%M')"
+          git push

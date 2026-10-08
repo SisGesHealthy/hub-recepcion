@@ -68,6 +68,12 @@ export const api = {
       return null;
     }
   },
+  async leerTexto() {
+    return "demo";
+  },
+  async propiedadDeCampo(lista, nombre) {
+    return nombre;
+  },
   async fetchImage(key) {
     const r = await idb.get("blobs", key);
     if (!r) throw new Error("sin imagen");
@@ -160,6 +166,24 @@ export async function sembrarDemo() {
     });
   }
   await kv.set("demoSembrado", true);
+}
+
+// OF de ejemplo con la misma forma que data/of_produccion.json (ya descifrado).
+export function ofsDemo() {
+  const dia = (d) => {
+    const x = new Date();
+    x.setDate(x.getDate() + d);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  };
+  return {
+    generado: new Date().toISOString(),
+    ofs: [
+      { of: "SEM/MO/01790", id: 1, fecha: dia(0), codigo: "PTEC015", producto: "PULPA DE MARACUYA 150 g", cantidad: 12000, unidad: "Units", estado: "En proceso", lote_odoo: "" },
+      { of: "SEM/MO/01791", id: 2, fecha: dia(0), codigo: "PTEC002", producto: "PULPA DE GUANABANA GOYA USA UNIDAD 397 g", cantidad: 8800, unidad: "Units", estado: "Confirmada", lote_odoo: "" },
+      { of: "SEM/MO/01792", id: 3, fecha: dia(0), codigo: "SALS007", producto: "SALSA DE CHOCOLATE 1 KG", cantidad: 2000, unidad: "kg", estado: "En proceso", lote_odoo: "L2802604" },
+      { of: "SEM/MO/01793", id: 4, fecha: dia(1), codigo: "PTEC014", producto: "PULPA DE MORA 150 g", cantidad: 5000, unidad: "Units", estado: "Confirmada", lote_odoo: "" },
+    ],
+  };
 }
 
 export async function borrarDemo() {

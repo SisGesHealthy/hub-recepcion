@@ -139,6 +139,26 @@ export const api = {
     return fileUrl;
   },
 
+  // Contenido de texto de un archivo del sitio (ruta relativa al servidor).
+  async leerTexto(rutaServidor) {
+    const token = await getAccessToken();
+    const url = `${SITE}/_api/web/GetFileByServerRelativePath(decodedurl='${encodeURIComponent(rutaServidor.replace(/'/g, "''"))}')/$value`;
+    const res = await fetchConLimite(url, { headers: { Authorization: `Bearer ${token}` } }, 20000);
+    if (!res.ok) throw Object.assign(new Error(`Archivo ${rutaServidor}: ${res.status}`), { status: res.status });
+    return (await res.text()).trim();
+  },
+
+  // Nombre de propiedad REST de una columna buscada por su título visible o
+  // nombre interno (columnas agregadas a mano: no sabemos cómo las nombró
+  // SharePoint). Los que empiezan con "_" llevan el prefijo "OData_".
+  async propiedadDeCampo(lista, nombre) {
+    const r = await spFetch(`${listUrl(lista)}/fields?$select=Title,InternalName&$filter=Hidden eq false`);
+    const n = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const f = (r.value || []).find((x) => n(x.Title) === n(nombre) || n(x.InternalName) === n(nombre));
+    if (!f) return null;
+    return f.InternalName.startsWith("_") ? `OData_${f.InternalName}` : f.InternalName;
+  },
+
   // URL para mostrar una imagen ya guardada (columna de imagen en JSON).
   imageUrl(lista, id, valorCampo) {
     if (!valorCampo) return null;

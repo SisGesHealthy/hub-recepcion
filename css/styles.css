@@ -238,3 +238,23 @@ a { color: inherit; text-decoration: none; }
   .resumen-doc { box-shadow: none; padding: 0; }
   .doc-sec { break-inside: avoid; }
 }
+
+/* ---------- Calidad - Planta: OF del día y sus lotes ---------- */
+.orden.of-card { display: block; border-left-color: var(--ambar); }
+.orden.of-card.con-lote { border-left-color: var(--brand); }
+.of-cab { display: grid; grid-template-columns: 1fr 230px; gap: 14px; align-items: center; }
+.of-lotes { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.of-lote { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--brand-50); }
+.of-lote strong { font-size: 17px; }
+.of-lote-btns { margin: 0; flex: none; }
+.of-lote-btns > * { flex: none; }
+.of-lote-btns .btn { min-height: 42px; }
+.of-lote-btns .btn-sec { width: 46px; padding: 0; font-size: 18px; }
+.sin-rango { color: var(--ambar); font-size: 13px; font-weight: 600; }
+.sugerido { font-size: 13px; color: var(--ambar); font-weight: 600; }
+.texto-rojo { color: var(--rojo); }
+.campo input[type="date"] { font-size: 17px; }
+@media (max-width: 760px) {
+  .of-cab { grid-template-columns: 1fr; }
+  .of-lote { flex-direction: column; align-items: stretch; }
+}
