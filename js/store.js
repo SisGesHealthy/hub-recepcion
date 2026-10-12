@@ -1126,3 +1126,131 @@ export async function subirAhora() {
   await sincronizar();
   await sincronizar();
 }
+
+// ---------------- Control de pesos ----------------
+
+// Parámetros por producto (lista ParametrosPeso, Title = código de Odoo).
+export async function parametrosPeso() {
+  try {
+    const rows = await api.items("parametrosPeso", { top: 2000 });
+    await kv.set("cache:paramPeso", rows);
+    return rows;
+  } catch {
+    return kv.get("cache:paramPeso", []);
+  }
+}
+
+// Peso que se espera del producto:
+//  1) lo configurado por Sistemas (ParametrosPeso);
+//  2) si no, Odoo: en productos por unidad "weight" es la presentación (0,397 kg);
+//  3) en productos a granel (unidad kg, weight = 1 "por kilo") se toma del
+//     nombre: "PULPA DE MORA 14KG" → 14 kg.
+// Devuelve { nominal, min, max, unidad: "g"|"kg", origen, param }.
+export function especPeso(of, params) {
+  const param = params.find((p) => (p.Title || "").trim().toUpperCase() === (of.codigo || "").trim().toUpperCase()) || null;
+  if (param && param.PesoNominal) {
+    return { nominal: param.PesoNominal, min: param.PesoMinimo ?? null, max: param.PesoMaximo ?? null, unidad: param.Unidad || "g", origen: "configurado", param };
+  }
+  let gramos = null;
+  const uom = of.uom_producto || "";
+  if (/^unit|^unidad/i.test(uom) && of.peso_kg > 0) gramos = of.peso_kg * 1000; // 0,397 kg → 397 g
+  if (!gramos) {
+    // Del nombre: "12 X 14 OZ" → 14 oz por unidad; "14KG", "250 g"…
+    const oz = (of.producto || "").match(/(\d+(?:[.,]\d+)?)\s*OZ\b/i);
+    const m = (of.producto || "").match(/(\d+(?:[.,]\d+)?)\s*(KG|KL|KILOS?|G|GR|GRAMOS?)\b/i);
+    if (oz) gramos = Math.round(parseFloat(oz[1].replace(",", ".")) * 28.3495 * 10) / 10;
+    else if (m) gramos = parseFloat(m[1].replace(",", ".")) * (/^g/i.test(m[2]) ? 1 : 1000);
+  }
+  if (!gramos && of.peso_kg > 0 && of.peso_kg !== 1) gramos = of.peso_kg * 1000;
+  if (!gramos) return { nominal: null, min: null, max: null, unidad: "g", origen: "sin dato", param };
+  const unidad = gramos >= 2000 ? "kg" : "g";
+  return { nominal: unidad === "kg" ? gramos / 1000 : gramos, min: null, max: null, unidad, origen: "Odoo", param };
+}
+
+export function estadoPeso(valor, esp) {
+  if (valor === null || valor === undefined || isNaN(valor)) return null;
+  if (esp.min !== null && esp.min !== undefined && valor < esp.min) return "bajo";
+  if (esp.max !== null && esp.max !== undefined && valor > esp.max) return "alto";
+  return esp.min === null && esp.max === null ? "sinrango" : "ok";
+}
+
+// Alta o cambio de un parámetro (solo administrador).
+export async function guardarParametroPeso(p) {
+  const campos = {
+    Title: p.codigo.trim().toUpperCase(),
+    Producto: p.producto || "",
+    Cliente: p.cliente || "",
+    PesoNominal: p.nominal,
+    PesoMinimo: p.min,
+    PesoMaximo: p.max,
+    Unidad: p.unidad,
+    Activo: true,
+    Notas: p.notas || null,
+  };
+  if (p.id) await encolar({ tipo: "update", lista: "parametrosPeso", id: p.id, campos });
+  else await encolar({ tipo: "add", lista: "parametrosPeso", clave: [["Title", "eq", campos.Title]], campos });
+  await subirAhora();
+}
+
+export async function controlesDelDia(d) {
+  try {
+    const rows = await api.items("controlPesos", {
+      where: [["Fecha", "ge", new Date(diaASP(d))], ["Fecha", "lt", new Date(diaASP(sumarDias(d, 1)))]],
+      orderby: "HoraInicio asc",
+      top: 1000,
+    });
+    const pend = (await idb.getAll("outbox")).filter((o) => o.lista === "controlPesos" && o.tipo === "add" && diaISO(o.campos.Fecha) === d).map((o) => ({ ...o.campos, pendiente: true }));
+    return [...rows, ...pend.filter((p) => !rows.some((r) => r.Title === p.Title))];
+  } catch {
+    return (await idb.getAll("outbox")).filter((o) => o.lista === "controlPesos" && o.tipo === "add" && diaISO(o.campos.Fecha) === d).map((o) => ({ ...o.campos, pendiente: true }));
+  }
+}
+
+// Visita en curso: se guarda en el dispositivo mientras se toman muestras
+// (si se cierra la app o se va la señal no se pierde nada).
+export const visitaActual = () => kv.get("pesos:visita");
+export const guardarVisitaLocal = (v) => kv.set("pesos:visita", v);
+export const descartarVisita = () => kv.del("pesos:visita");
+
+export function resumenMuestras(muestras, esp) {
+  const pesos = muestras.map((m) => m.peso);
+  const n = pesos.length;
+  const prom = n ? pesos.reduce((a, b) => a + b, 0) / n : null;
+  const fuera = muestras.filter((m) => ["bajo", "alto"].includes(estadoPeso(m.peso, esp))).length;
+  return { n, promedio: prom === null ? null : Math.round(prom * 100) / 100, menor: n ? Math.min(...pesos) : null, mayor: n ? Math.max(...pesos) : null, fuera };
+}
+
+export async function finalizarVisita(v, { resultado, recomendaciones }, fotoBlob) {
+  const r = resumenMuestras(v.muestras, v.esp);
+  const campos = {
+    Title: v.id,
+    Fecha: diaASP(v.dia),
+    HoraInicio: v.inicio,
+    HoraFin: new Date().toISOString(),
+    OrdenFabricacion: v.of.of,
+    CodigoProducto: v.of.codigo,
+    Producto: v.of.producto,
+    Cliente: v.cliente || "",
+    Lote: v.lote || "",
+    Parada: v.parada || "",
+    Equipo: v.equipo || "",
+    Analista: v.analista || usuario?.nombre || "",
+    PesoNominal: v.esp.nominal,
+    PesoMinimo: v.esp.min,
+    PesoMaximo: v.esp.max,
+    Unidad: v.esp.unidad,
+    NMuestras: r.n,
+    Promedio: r.promedio,
+    PesoMenor: r.menor,
+    PesoMayor: r.mayor,
+    FueraDeRango: r.fuera,
+    // Detalle legible y ordenado: "1. 10:32 · 398,5 g · OK"
+    Muestras: v.muestras.map((m, i) => `${i + 1}. ${fmtHora(m.hora)} · ${String(m.peso).replace(".", ",")} ${v.esp.unidad} · ${m.estado === "ok" ? "OK" : m.estado === "bajo" ? "BAJO" : m.estado === "alto" ? "ALTO" : "—"}`).join("\n"),
+    Recomendaciones: recomendaciones || null,
+    Resultado: resultado,
+  };
+  await encolar({ tipo: "add", lista: "controlPesos", clave: [["Title", "eq", v.id]], campos, foto: fotoBlob ? { campo: "Foto", ext: "jpg" } : null }, fotoBlob);
+  await kv.set("pesos:ultimoEquipo", v.equipo || "");
+  await descartarVisita();
+  return campos;
+}

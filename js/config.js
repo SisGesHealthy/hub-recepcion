@@ -37,6 +37,8 @@ export const CONFIG = {
       lotes: "Lists/Lotes", // lotes de producción (Calidad - Planta)
       registros: "Lists/Registros", // mediciones por parada (Calidad - Planta)
       catalogo: "Lists/CatalogoParametrosLiberacion", // rangos por producto
+      parametrosPeso: "Lists/ParametrosPeso", // Control de pesos: nominal/mín/máx por producto
+      controlPesos: "Lists/ControlPesos", // Control de pesos: una fila por visita
     },
   },
 
@@ -45,9 +47,10 @@ export const CONFIG = {
   // sin acceso.
   accesos: {
     "bodega2@healthyfood.com.ec": ["bodega"],
-    "calidad@healthyfood.com.ec": ["calidad", "planta"],
-    "calidad2@healthyfood.com.ec": ["calidad", "planta"],
-    "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta", "config"],
+    "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos"],
+    "calidad2@healthyfood.com.ec": ["calidad", "planta", "pesos"],
+    // "config" = administrador: configuración y parámetros de peso
+    "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta", "pesos", "config"],
   },
 
   // Bodegueros activos (iniciales que se guardan en Recepciones.Bodeguero).

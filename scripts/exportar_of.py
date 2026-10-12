@@ -46,7 +46,7 @@ def leer_ofs(x):
         order="production_date, date_start, name",
     )
     prod_ids = list({o["product_id"][0] for o in ofs if o["product_id"]})
-    productos = {p["id"]: p for p in x("product.product", "read", prod_ids, fields=["default_code", "name"])} if prod_ids else {}
+    productos = {p["id"]: p for p in x("product.product", "read", prod_ids, fields=["default_code", "name", "weight", "uom_id"])} if prod_ids else {}
     out = []
     for o in ofs:
         p = productos.get(o["product_id"][0], {}) if o["product_id"] else {}
@@ -60,6 +60,10 @@ def leer_ofs(x):
             "unidad": o["product_uom_id"][1] if o["product_uom_id"] else "",
             "estado": ESTADOS.get(o["state"], o["state"]),
             "lote_odoo": o["lot_producing_id"][1] if o["lot_producing_id"] else "",
+            # Para Control de pesos: peso de la presentación (kg) y unidad de
+            # medida del producto (en productos a granel "kg" el peso es 1 = por kilo).
+            "peso_kg": p.get("weight") or 0,
+            "uom_producto": p["uom_id"][1] if p.get("uom_id") else "",
         })
     return {"generado": dt.datetime.now(TZ).isoformat(timespec="seconds"), "desde": desde.isoformat(), "hasta": hasta.isoformat(), "ofs": out}
 

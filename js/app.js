@@ -4,12 +4,14 @@ import { CONFIG } from "./config.js";
 import { el, clear } from "./dom.js";
 import { initStore, setUsuario, getUsuario, onSync, sincronizar, descartarPrimeraOperacion, cargarConfig } from "./store.js";
 import { confirmar } from "./ui.js";
+import { iconoBalanza } from "./pesos.js";
 
 const vista = document.getElementById("vista");
 const DEPTOS = {
   bodega: { titulo: "Bodega", sub: "Recepción de fruta por pallet", icono: "🚚", ruta: "#/bodega" },
   calidad: { titulo: "Calidad", sub: "Liberación de materia prima", icono: "🧪", ruta: "#/calidad" },
   planta: { titulo: "Calidad - Planta", sub: "Liberación de producto en proceso", icono: "🏭", ruta: "#/planta" },
+  pesos: { titulo: "Control de pesos", sub: "Muestreo en dosificado", icono: "balanza", ruta: "#/pesos" },
   config: { titulo: "Configuración", sub: "Responsables y bodegueros", icono: "⚙️", ruta: "#/config" },
 };
 
@@ -121,6 +123,7 @@ async function rutear() {
   else if (seccion === "calidad") (await import("./calidad.js")).render(vista, resto);
   else if (seccion === "planta") (await import("./planta.js")).render(vista, resto);
   else if (seccion === "config") (await import("./configuracion.js")).render(vista);
+  else if (seccion === "pesos") (await import("./pesos.js")).render(vista, resto);
 }
 
 function inicio(u) {
@@ -140,7 +143,7 @@ function inicio(u) {
         { class: "deptos" },
         u.accesos.map((k) =>
           el("a", { class: "depto", href: DEPTOS[k].ruta }, [
-            el("span", { class: "depto-ico" }, DEPTOS[k].icono),
+            el("span", { class: "depto-ico" }, DEPTOS[k].icono === "balanza" ? iconoBalanza("ico-depto") : DEPTOS[k].icono),
             el("strong", {}, DEPTOS[k].titulo),
             el("small", {}, DEPTOS[k].sub),
           ])

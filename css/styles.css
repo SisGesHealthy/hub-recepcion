@@ -283,3 +283,39 @@ a { color: inherit; text-decoration: none; }
 
 .btn-mini { min-height: 32px; padding: 4px 10px; font-size: 13px; }
 .btn-amarillo { background: var(--ambar); color: #fff; }
+
+/* ---------- Control de pesos ---------- */
+.ico-depto { width: 54px; height: 54px; color: var(--brand-700); }
+.ico-titulo { width: 40px; height: 40px; color: var(--brand-700); flex: none; }
+.cab-titulo-ico { display: flex; align-items: center; gap: 12px; }
+.balanza h2 { text-align: center; }
+.peso-fila { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 0 10px; }
+.peso-centro { position: relative; max-width: 420px; margin: 0 auto 10px; }
+.peso-grande { width: 100%; text-align: center; font-size: 48px; font-weight: 800; padding: 14px 54px 14px 14px; border-radius: 16px; border: 2.5px solid var(--border); background: var(--card); font-variant-numeric: tabular-nums; }
+.peso-grande.ok { border-color: var(--verde); background: var(--ok-bg); color: var(--verde); }
+.peso-grande.bajo, .peso-grande.alto { border-color: var(--rojo); background: var(--err-bg); color: var(--rojo); }
+.peso-u { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 20px; font-weight: 700; color: var(--dim); }
+.btn.paso { flex: 1 1 0; min-width: 0; max-width: 90px; min-height: 64px; font-size: 18px; border-radius: 14px; }
+.btn.paso.menos { background: var(--err-bg); color: var(--rojo); }
+.btn.paso.mas { background: var(--ok-bg); color: var(--verde); }
+.peso-estado { text-align: center; font-weight: 700; margin-bottom: 12px; color: var(--dim); }
+.peso-estado.ok { color: var(--verde); }
+.peso-estado.bajo, .peso-estado.alto { color: var(--rojo); }
+.muestras { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; margin-top: 10px; }
+.muestra { display: grid; grid-template-columns: 50px 1fr auto auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.muestra span { font-size: 18px; font-weight: 700; }
+.muestra small { color: var(--dim); }
+.muestra.ok { background: var(--ok-bg); }
+.muestra.bajo, .muestra.alto { background: var(--err-bg); color: var(--rojo); }
+.resumen-tot .fuera b { color: var(--rojo); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chip { border: 1px solid var(--border); background: var(--brand-50); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+.param-peso { white-space: normal; }
+.param-peso .in-num { width: 90px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; }
+.param-peso .in-tol { width: 60px; }
+.param-peso .in-txt { width: 150px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.param-peso select { padding: 7px; border-radius: 8px; border: 1px solid var(--border); }
+.param-peso .td-prod { max-width: 280px; }
+.param-peso tr.sin-config td { background: var(--warn-bg); }
+.nota.pad { padding: 0 12px 12px; }
+@media (max-width: 760px) { .peso-grande { font-size: 38px; } .btn.paso { min-width: 54px; min-height: 54px; } }

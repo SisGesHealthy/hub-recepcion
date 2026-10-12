@@ -8,7 +8,7 @@
 import { CONFIG } from "./config.js";
 
 const DB_NAME = CONFIG.useMock ? "hub-recepcion-demo" : "hub-recepcion";
-const DB_VERSION = 1;
+const DB_VERSION = 2; // 2: listas de Control de pesos (modo demo)
 let dbPromise = null;
 
 function openDb() {
