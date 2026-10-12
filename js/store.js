@@ -967,19 +967,33 @@ export async function cerrarLote(lote) {
 // Responsables de liberación y bodegueros viven en un JSON en SharePoint
 // (Documentos compartidos/HubRecepcion/configuracion.json) que Sistemas edita
 // desde la app. Si no existe o no hay red, se usa lo de config.js / la copia.
-export async function cargarConfig() {
-  const { carpeta, nombre } = CONFIG.archivoConfig;
-  let cfg = null;
-  try {
-    cfg = JSON.parse(await api.leerTexto(`${carpeta}/${nombre}`));
-    await kv.set("cache:config", cfg);
-  } catch (e) {
-    cfg = e.status === 404 ? null : await kv.get("cache:config");
-  }
+function aplicarConfig(cfg) {
   if (cfg?.responsablesPlanta?.length) CONFIG.responsablesPlanta = cfg.responsablesPlanta;
   if (cfg?.bodegueros?.length) CONFIG.bodegueros = cfg.bodegueros;
   if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
-  return cfg;
+}
+
+// Al abrir la app NO se espera a SharePoint: se aplica al instante la última
+// copia guardada y la versión actual se descarga en segundo plano (con mala
+// señal, esperar el archivo dejaba la pantalla en blanco hasta 20 s).
+// La pantalla de Configuración sí espera ({ esperar: true }).
+export async function cargarConfig({ esperar = false } = {}) {
+  const cache = await kv.get("cache:config");
+  aplicarConfig(cache);
+  const { carpeta, nombre } = CONFIG.archivoConfig;
+  const descarga = api
+    .leerTexto(`${carpeta}/${nombre}`)
+    .then(async (txt) => {
+      const cfg = JSON.parse(txt);
+      await kv.set("cache:config", cfg);
+      aplicarConfig(cfg);
+      return cfg;
+    })
+    .catch((e) => {
+      console.warn("configuracion.json:", e.message);
+      return cache;
+    });
+  return esperar ? descarga : cache;
 }
 
 export async function guardarConfig(cfg) {

@@ -8,7 +8,7 @@ import * as st from "./store.js";
 import { toast } from "./ui.js";
 
 export async function render(vista) {
-  await st.cargarConfig();
+  await st.cargarConfig({ esperar: true });
   const lista = (arr) => el("textarea", { rows: String(Math.max(4, arr.length + 1)) }, arr.join("\n"));
   const resp = lista(CONFIG.responsablesPlanta);
   const bod = lista(CONFIG.bodegueros);

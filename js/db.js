@@ -8,26 +8,56 @@
 import { CONFIG } from "./config.js";
 
 const DB_NAME = CONFIG.useMock ? "hub-recepcion-demo" : "hub-recepcion";
-const DB_VERSION = 2; // 2: listas de Control de pesos (modo demo)
+// La base se abre en la versión que YA tenga el equipo (sin pedir un número
+// fijo): un equipo que quedó en otra versión no falla con "VersionError".
+// Solo si falta alguna tabla se sube una versión para crearla. Las tablas
+// m_<lista> existen únicamente en la base del modo demo.
+const TABLAS = ["outbox", "blobs", "kv", ...(CONFIG.useMock ? Object.keys(CONFIG.sp.listas).map((l) => "m_" + l) : [])];
 let dbPromise = null;
+
+function crearTablas(db) {
+  if (!db.objectStoreNames.contains("outbox")) db.createObjectStore("outbox", { keyPath: "seq", autoIncrement: true });
+  if (!db.objectStoreNames.contains("blobs")) db.createObjectStore("blobs", { keyPath: "id" });
+  if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv", { keyPath: "k" });
+  for (const n of TABLAS) if (!db.objectStoreNames.contains(n)) db.createObjectStore(n, { keyPath: "ID" });
+}
+
+function abrir(version) {
+  return new Promise((resolve, reject) => {
+    const req = version ? indexedDB.open(DB_NAME, version) : indexedDB.open(DB_NAME);
+    req.onupgradeneeded = () => crearTablas(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Si otra pestaña necesita actualizar la base, esta cede la conexión.
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => {
+      if (document.querySelector(".aviso-fijo")) return;
+      const a = document.createElement("div");
+      a.className = "aviso aviso-fijo";
+      a.textContent = "La app está abierta en otra pestaña o ventana con una versión anterior. Ciérrala para continuar.";
+      document.body.prepend(a);
+    };
+  });
+}
 
 function openDb() {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("outbox")) db.createObjectStore("outbox", { keyPath: "seq", autoIncrement: true });
-      if (!db.objectStoreNames.contains("blobs")) db.createObjectStore("blobs", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv", { keyPath: "k" });
-      for (const lista of Object.keys(CONFIG.sp.listas)) {
-        const n = "m_" + lista;
-        if (!db.objectStoreNames.contains(n)) db.createObjectStore(n, { keyPath: "ID" });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  dbPromise = (async () => {
+    let db = await abrir();
+    if (TABLAS.some((t) => !db.objectStoreNames.contains(t))) {
+      const v = db.version + 1;
+      db.close();
+      db = await abrir(v);
+    }
+    return db;
+  })();
+  dbPromise.catch(() => (dbPromise = null));
   return dbPromise;
 }
 
