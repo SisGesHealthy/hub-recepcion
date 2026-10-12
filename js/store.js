@@ -832,12 +832,60 @@ export async function listarLotes() {
   }
 }
 
+// Paradas del lote: mismo código de lote Y misma fecha de producción (un mismo
+// código puede repetirse en otro día, ej. "HF PB 265 26").
 export async function registrosDeLote(lote) {
   try {
-    return await api.items("registros", { where: [["Title", "eq", lote.Title]], orderby: "field_1 asc", top: 500 });
+    const where = [["Title", "eq", lote.Title]];
+    const f = lote.Fechadeproducci_x00f3_n;
+    if (f) where.push(["Fecha_produccion", "ge", new Date(diaASP(diaISO(f)))], ["Fecha_produccion", "lt", new Date(diaASP(sumarDias(diaISO(f), 1)))]);
+    return await api.items("registros", { where, orderby: "ID asc", top: 500 });
   } catch {
     return [];
   }
+}
+
+// Columnas agregadas a Registros (config.registrosExtra) → nombre de
+// propiedad REST, o null si todavía no existe la columna en SharePoint.
+let colsReg = null;
+export async function columnasRegistros() {
+  if (!colsReg) {
+    colsReg = {};
+    for (const [k, nombre] of Object.entries(CONFIG.registrosExtra)) {
+      try {
+        colsReg[k] = await api.propiedadDeCampo("registros", nombre);
+      } catch {
+        colsReg[k] = null;
+      }
+    }
+  }
+  return colsReg;
+}
+
+// Lee las columnas extra de un registro con claves lógicas.
+export async function extrasDe(registro) {
+  const cols = await columnasRegistros();
+  const out = {};
+  for (const [k, prop] of Object.entries(cols)) out[k] = prop ? registro[prop] ?? null : null;
+  return out;
+}
+
+// Última parada registrada de este producto (para precargar sensorial y
+// controles PPRO/PCC, que el analista debe CONFIRMAR o corregir).
+export async function ultimoRegistroDeProducto(prod) {
+  if (!prod?.Ordenamiento) return null;
+  try {
+    return (await api.items("registros", { where: [["COD_Producto", "eq", prod.Ordenamiento]], orderby: "ID desc", top: 1 }))[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+// Etiqueta de parada como en el Excel: 3 · repetición → 3.1, 3.2…
+export function etiquetaParada(r, numRep) {
+  const n = r.field_1 ?? "";
+  if (!r.Repeticion) return String(n);
+  return `${n}.${numRep || 1}`;
 }
 
 export function evaluarRango(prod, v) {
@@ -857,7 +905,11 @@ export function evaluarRango(prod, v) {
   };
 }
 
+// v.extra = { color, olor, sabor, pproDesinf, pproFiltrado, pcc1, pcc2,
+// liberacion, incidente, correcciones, numRep }. Las columnas que aún no
+// existen en SharePoint se omiten y se devuelven en "faltan".
 export async function registrarParada(lote, prod, v) {
+  const cols = await columnasRegistros();
   const campos = {
     Title: lote.Title,
     field_1: v.parada,
@@ -865,6 +917,7 @@ export async function registrarParada(lote, prod, v) {
     field_3: v.ph,
     field_4: v.acidez,
     field_5: v.recorrido ?? null,
+    field_6: v.viscosidad ?? null,
     field_7: v.fruta ?? null,
     field_8: v.ratio ?? null,
     field_9: v.responsable,
@@ -873,18 +926,159 @@ export async function registrarParada(lote, prod, v) {
     Fecha_produccion: lote.Fechadeproducci_x00f3_n,
     COD_Producto: prod?.Ordenamiento || null,
   };
-  await encolar({
-    tipo: "add",
-    lista: "registros",
-    clave: [["Title", "eq", lote.Title], ["field_1", "eq", v.parada], ["Repeticion", "eq", !!v.repeticion]],
-    campos,
-  });
+  const faltan = [];
+  for (const [k, val] of Object.entries(v.extra || {})) {
+    if (val === undefined || val === null || val === "") continue;
+    if (cols[k]) campos[cols[k]] = val;
+    else faltan.push(CONFIG.registrosExtra[k]);
+  }
+  const clave = [["Title", "eq", lote.Title], ["field_1", "eq", v.parada], ["Repeticion", "eq", !!v.repeticion], ["Fecha_produccion", "eq", new Date(lote.Fechadeproducci_x00f3_n)]];
+  if (cols.numRep && v.extra?.numRep) clave.push([cols.numRep, "eq", v.extra.numRep]);
+  await encolar({ tipo: "add", lista: "registros", clave, campos });
   await kv.set("ultimoResponsablePlanta", v.responsable);
-  return campos;
+  return { campos, faltan };
+}
+
+// Microbiología: llega del laboratorio días después y en el 92 % de los lotes
+// es igual en todas las paradas (Excel 2026) → se carga una vez por lote y se
+// escribe en todas sus paradas.
+export async function guardarMicroLote(registros, valores) {
+  const cols = await columnasRegistros();
+  const campos = {};
+  for (const k of ["aerobios", "mohos", "coliformes", "ecoli", "salmonella"]) if (cols[k] && valores[k] !== null && valores[k] !== undefined && valores[k] !== "") campos[cols[k]] = valores[k];
+  if (!Object.keys(campos).length) return 0;
+  let n = 0;
+  for (const r of registros) {
+    if (!r.ID) continue;
+    await encolar({ tipo: "update", lista: "registros", id: r.ID, campos });
+    n++;
+  }
+  return n;
 }
 
 export async function cerrarLote(lote) {
   await encolar({ tipo: "update", lista: "lotes", id: lote.ID, campos: { field_4: "Finalizado" } });
   const rows = await kv.get("cache:lotes", []);
   await kv.set("cache:lotes", rows.filter((l) => l.ID !== lote.ID));
+}
+
+// ---------------- configuración editable (SharePoint) ----------------
+
+// Responsables de liberación y bodegueros viven en un JSON en SharePoint
+// (Documentos compartidos/HubRecepcion/configuracion.json) que Sistemas edita
+// desde la app. Si no existe o no hay red, se usa lo de config.js / la copia.
+export async function cargarConfig() {
+  const { carpeta, nombre } = CONFIG.archivoConfig;
+  let cfg = null;
+  try {
+    cfg = JSON.parse(await api.leerTexto(`${carpeta}/${nombre}`));
+    await kv.set("cache:config", cfg);
+  } catch (e) {
+    cfg = e.status === 404 ? null : await kv.get("cache:config");
+  }
+  if (cfg?.responsablesPlanta?.length) CONFIG.responsablesPlanta = cfg.responsablesPlanta;
+  if (cfg?.bodegueros?.length) CONFIG.bodegueros = cfg.bodegueros;
+  if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
+  return cfg;
+}
+
+export async function guardarConfig(cfg) {
+  const { carpeta, nombre } = CONFIG.archivoConfig;
+  const datos = { ...cfg, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
+  await api.escribirArchivo(carpeta, nombre, JSON.stringify(datos, null, 2));
+  await kv.set("cache:config", datos);
+  await cargarConfig();
+}
+
+// "ET" → "Edwin Tulcán" para registros viejos.
+export const nombreResponsable = (r) => CONFIG.inicialesHistoricas[(r || "").trim().toUpperCase()] || r || "";
+
+// ---------------- reporte con las columnas del Excel ----------------
+
+// Encabezados EXACTOS de "MODELO LIBERACIONES 2026" (A…AQ), para pegar con
+// Ctrl+V sin mover nada. B y C (sistema anterior) quedan vacías.
+export const COLUMNAS_EXCEL = [
+  "No.", "CODIGO SISTEMA", "NOMBRE SISTEMA", "CÓDIGO OODO", "NUEVO NOMBRE", "CLIENTE ", "LOTE", "PARADA", "F. ELAB", "F. CAD",
+  "ALERTA CONTRAMUESTRA", "RESPONSABLE DE LIBERACIÓN ", "BRIX", "pH", "ACIDEZ", "RATIO", "VISCOSIDAD ", "RECORRIDO ", "% FRUTA",
+  "BRIX2", "pH3", "ACIDEZ4", "VISCOSIDAD 5", "RECORRIDO 6", "% FRUTA7", "COLOR", "OLOR", "SABOR", "Columna8", "AEROBIOS",
+  "MOHOS Y LEVADURAS", "COLIFORMES", "E. COLI", "SALMONELLA", "PPROP (DESINFECCIÓN) ", "PPROP (FILTRADO) ", "PCC 1 (PASTEURIZADO) ",
+  "PPC 2 (CONTROL DE PERNOS Y TUERCAS) ", "LIBERACIÓN", "DETALLE INCIDENTE", "CORRECCIONES", "OBSERVACIONES", "FECHA DE PRODUCCIÓN",
+];
+
+// Filas del reporte entre dos fechas de producción (inclusive). Cada valor
+// queda tipado: { t: "n" número | "d" fecha YYYY-MM-DD | "s" texto, v }.
+export async function reporteLiberaciones(desde, hasta) {
+  const ini = new Date(diaASP(desde));
+  const fin = new Date(diaASP(sumarDias(hasta, 1)));
+  const [regs, lotes, cat, cols] = await Promise.all([
+    api.items("registros", { where: [["Fecha_produccion", "ge", ini], ["Fecha_produccion", "lt", fin]], orderby: "ID asc", top: 5000 }),
+    api.items("lotes", { where: [["Fechadeproducci_x00f3_n", "ge", ini], ["Fechadeproducci_x00f3_n", "lt", fin]], top: 2000 }),
+    catalogo(),
+    columnasRegistros(),
+  ]);
+  const ex = (r, k) => (cols[k] ? r[cols[k]] ?? null : null);
+  const loteDe = (r) => lotes.find((l) => l.Title === r.Title && diaISO(l.Fechadeproducci_x00f3_n) === diaISO(r.Fecha_produccion)) || null;
+  const prodDe = (r) => cat.find((c) => (c.Ordenamiento || "").trim() === (r.COD_Producto || "").trim()) || null;
+
+  // Orden: fecha de producción, lote, parada, repetición.
+  regs.sort((a, b) =>
+    (diaISO(a.Fecha_produccion) || "").localeCompare(diaISO(b.Fecha_produccion) || "") ||
+    (a.Title || "").localeCompare(b.Title || "") ||
+    (a.field_1 || 0) - (b.field_1 || 0) ||
+    (a.Repeticion ? 1 : 0) - (b.Repeticion ? 1 : 0) ||
+    (ex(a, "numRep") || 0) - (ex(b, "numRep") || 0) ||
+    a.ID - b.ID
+  );
+
+  // T–Y "mediciones no liberadas": en la última medición de cada parada, cuántas
+  // anteriores de esa misma parada salieron fuera de rango en cada parámetro.
+  const grupos = {};
+  for (const r of regs) (grupos[`${r.Title}|${diaISO(r.Fecha_produccion)}|${r.field_1}`] ||= []).push(r);
+  const noLib = new Map();
+  for (const g of Object.values(grupos)) {
+    if (g.length < 2) continue;
+    const prod = prodDe(g[0]);
+    const cuenta = { brix: 0, ph: 0, acidez: 0 };
+    for (const r of g.slice(0, -1)) {
+      const ev = evaluarRango(prod, { brix: r.field_2, ph: r.field_3, acidez: r.field_4 });
+      for (const k of Object.keys(cuenta)) if (ev[k] === "bajo" || ev[k] === "alto") cuenta[k]++;
+    }
+    noLib.set(g[g.length - 1], cuenta);
+  }
+
+  const hoy = new Date(diaASP(hoyISO()));
+  const N = (v) => ({ t: "n", v: v === null || v === undefined || v === "" ? null : Number(v) });
+  const S = (v) => ({ t: "s", v: v === null || v === undefined ? "" : String(v) });
+  const D = (iso) => ({ t: "d", v: iso ? diaISO(iso) : "" });
+  return regs.map((r, i) => {
+    const lote = loteDe(r);
+    const prod = prodDe(r);
+    const cad = lote?.field_3 || null;
+    const alerta = cad ? (new Date(cad) < new Date(hoy.getTime() - 30 * 86400000) ? "ALERTA" : "PRODUCTO DENTRO DE VU") : "";
+    const nl = noLib.get(r) || {};
+    const cnt = (k) => N(nl[k] || null);
+    return [
+      N(i + 1), S(""), S(""), S(prod?.Title || ""), S(prod?.field_1 || ""), S(prod?.field_2 || ""), S(r.Title),
+      S(etiquetaParada(r, ex(r, "numRep"))), D(lote?.field_2), D(cad), S(alerta), S(nombreResponsable(r.field_9)),
+      N(r.field_2), N(r.field_3), N(r.field_4), N(r.field_8 != null ? Math.round(r.field_8 * 100) / 100 : null), N(r.field_6), N(r.field_5), N(r.field_7),
+      cnt("brix"), cnt("ph"), cnt("acidez"), N(null), N(null), N(null),
+      S(ex(r, "color")), S(ex(r, "olor")), S(ex(r, "sabor")), S(""),
+      N(ex(r, "aerobios")), N(ex(r, "mohos")), N(ex(r, "coliformes")), N(ex(r, "ecoli")), S(ex(r, "salmonella")),
+      S(ex(r, "pproDesinf")), S(ex(r, "pproFiltrado")), S(ex(r, "pcc1")), S(ex(r, "pcc2")),
+      S(ex(r, "liberacion")), S(ex(r, "incidente")), S(ex(r, "correcciones")), S(r.Observaciones), D(r.Fecha_produccion),
+    ];
+  });
+}
+
+// Texto separado por tabulaciones para pegar en Excel. Decimales con coma
+// (Excel en español de Ecuador) salvo que se pida punto; fechas dd/mm/aaaa.
+export function filasATexto(filas, { encabezados = false, decimal = "," } = {}) {
+  const cel = (c) => {
+    if (c.t === "n") return c.v === null || isNaN(c.v) ? "" : String(c.v).replace(".", decimal);
+    if (c.t === "d") return c.v ? c.v.split("-").reverse().join("/") : "";
+    return String(c.v || "").replace(/[\t\r\n]+/g, " ").trim();
+  };
+  const lineas = filas.map((f) => f.map(cel).join("\t"));
+  if (encabezados) lineas.unshift(COLUMNAS_EXCEL.join("\t"));
+  return lineas.join("\r\n");
 }

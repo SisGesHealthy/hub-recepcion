@@ -15,6 +15,7 @@ export async function render(vista, resto) {
   const cat = await st.catalogo();
   const prodDe = (lote) => cat.find((c) => c.ID === lote.Producto_x002d_CODId) || null;
   if (resto[0] === "lote" && resto[1]) return pantallaLote(vista, Number(resto[1]), prodDe);
+  if (resto[0] === "reporte") return (await import("./reporte.js")).render(vista);
   const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
   return pantallaDia(vista, dia, cat);
 }
@@ -36,6 +37,7 @@ async function pantallaDia(vista, dia, cat) {
         el("button", { class: "btn btn-sec", title: "Día siguiente", onclick: () => ir(st.sumarDias(dia, 1)) }, "›"),
         dia !== st.hoyISO() ? el("button", { class: "btn btn-sec", onclick: () => ir(st.hoyISO()) }, "Hoy") : null,
         el("button", { class: "btn btn-sec", title: "Actualizar", onclick: () => cargar() }, "↻"),
+        el("a", { class: "btn btn-sec", href: "#/planta/reporte" }, "📊 Reporte"),
       ]),
     ]),
     lista
@@ -193,6 +195,11 @@ async function formLote({ of, prod, dia, dividir = false, lotes = [], lote = nul
 
 // ---------------- lote: registro de paradas ----------------
 
+// Las columnas del Excel "MODELO LIBERACIONES 2026" se capturan aquí: medición
+// (°Bx, pH, acidez, viscosidad, recorrido, % fruta), sensorial y controles
+// PPRO/PCC (precargados pero con confirmación obligatoria del analista, para
+// que no sea copiar y pegar), liberación, incidente/correcciones.
+// La microbiología llega días después y se carga una vez para todo el lote.
 async function pantallaLote(vista, id, prodDe) {
   let lote = null;
   try {
@@ -200,25 +207,68 @@ async function pantallaLote(vista, id, prodDe) {
   } catch {}
   if (!lote) return vacio(vista, "Lote no encontrado (sin conexión o eliminado). Vuelve a la lista.");
   const prod = prodDe(lote);
+  const cols = await st.columnasRegistros();
+  const faltanCols = Object.entries(cols).filter(([, p]) => !p).map(([k]) => CONFIG.registrosExtra[k]);
   const tabla = el("div", { class: "paradas" });
+  const micro = el("div");
   let paradas = [];
+  const extras = new Map(); // registro → extras leídos
 
-  const rangoTxt = (min, max) => (min === null || min === undefined) && (max === null || max === undefined) ? "sin rango" : `${min ?? "—"} – ${max ?? "—"}`;
+  const rangoTxt = (min, max) => ((min === null || min === undefined) && (max === null || max === undefined) ? "sin rango" : `${min ?? "—"} – ${max ?? "—"}`);
   const pinta = (campo, estado) => {
     campo.wrap.classList.remove("ok", "bajo", "alto");
     if (estado) campo.wrap.classList.add(estado);
   };
+  const sel = (opciones, vacio = true) => el("select", {}, [...(vacio ? [el("option", { value: "" }, "—")] : []), ...opciones.map((o) => el("option", { value: o }, o))]);
+  const campoSel = (label, s) => el("label", { class: "campo" }, [el("span", { class: "campo-label" }, label), s]);
+
+  // --- medición ---
   const ratioOut = el("div", { class: "ratio" });
   const brix = campoNum("°Brix", { oninput: () => evaluar(), autofocus: true });
   const ph = campoNum("pH", { oninput: () => evaluar() });
   const acidez = campoNum("Acidez", { oninput: () => evaluar() });
-  const recorrido = campoNum("Recorrido (opcional)");
-  const fruta = campoNum("% fruta (opcional)", { sufijo: "%" });
-  const responsable = el("select", {}, CONFIG.responsablesPlanta.map((r) => el("option", { value: r }, r)));
-  responsable.value = await kv.get("ultimoResponsablePlanta", CONFIG.responsablesPlanta[0]);
-  const repeticion = el("input", { type: "checkbox" });
-  const obs = el("input", { type: "text", class: "obs", placeholder: "Observación (opcional)" });
+  const viscosidad = campoNum("Viscosidad");
+  const recorrido = campoNum("Recorrido");
+  const fruta = campoNum("% fruta", { sufijo: "%" });
+
+  // --- tipo de parada: nueva o repetición de una existente ---
+  const tipo = el("select", { class: "tipo-parada" });
   const nParada = el("b", { class: "n-parada" });
+
+  // --- sensorial y controles ---
+  const color = el("input", { type: "text", placeholder: "OK o código Pantone (ej. 7402 C)" });
+  const olor = sel(CONFIG.opciones.sensorial);
+  const sabor = sel(CONFIG.opciones.sensorial);
+  const pproD = sel(CONFIG.opciones.control);
+  const pproF = sel(CONFIG.opciones.control);
+  const pcc1 = sel(CONFIG.opciones.pcc1);
+  const pcc2 = sel(CONFIG.opciones.control);
+  const origenPrecarga = el("span", { class: "sugerido" });
+  const confirma = el("input", { type: "checkbox" });
+  const bloqueCtrl = el("fieldset", { class: "bloque-confirmar" }, [
+    el("legend", {}, "Sensorial y controles"),
+    origenPrecarga,
+    el("div", { class: "campos-3" }, [el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Color"), color]), campoSel("Olor", olor), campoSel("Sabor", sabor)]),
+    el("div", { class: "campos-2" }, [campoSel("PPRO desinfección", pproD), campoSel("PPRO filtrado", pproF), campoSel("PCC 1 pasteurizado", pcc1), campoSel("PCC 2 pernos y tuercas", pcc2)]),
+    el("label", { class: "check confirmar" }, [confirma, " Revisé y confirmo que estos datos corresponden a ESTA parada"]),
+  ]);
+  for (const x of [color, olor, sabor, pproD, pproF, pcc1, pcc2]) x.addEventListener("change", () => bloqueCtrl.classList.add("editado"));
+
+  // --- liberación ---
+  const liberacion = sel(CONFIG.opciones.liberacion, false);
+  const incidente = el("textarea", { rows: "2", placeholder: "¿Qué pasó? (solo si no se libera)" });
+  const correcciones = el("textarea", { rows: "2", placeholder: "Acción tomada en producción (ej. se añaden 20 kg de agua)" });
+  const bloqueNoLib = el("div", { class: "campos-2 hidden" }, [campoSel("Detalle del incidente", incidente), campoSel("Correcciones", correcciones)]);
+  let liberacionTocada = false;
+  liberacion.addEventListener("change", () => {
+    liberacionTocada = true;
+    bloqueNoLib.classList.toggle("hidden", liberacion.value === "Liberado");
+  });
+
+  const responsable = el("select", {}, CONFIG.responsablesPlanta.map((r) => el("option", { value: r }, r)));
+  const ultimoResp = await kv.get("ultimoResponsablePlanta", "");
+  responsable.value = CONFIG.responsablesPlanta.includes(ultimoResp) ? ultimoResp : CONFIG.responsablesPlanta[0];
+  const obs = el("input", { type: "text", class: "obs", placeholder: "Observación (opcional)" });
 
   function evaluar() {
     const v = { brix: brix.val(), ph: ph.val(), acidez: acidez.val() };
@@ -229,17 +279,74 @@ async function pantallaLote(vista, id, prodDe) {
     pinta(acidez, ev.acidez);
     ratioOut.className = "ratio " + (ev.ratio || "");
     ratioOut.textContent = v.ratio ? `Ratio ${v.ratio.toFixed(2)}${prod?.field_9 != null ? ` (rango ${rangoTxt(prod.field_9, prod.field_10)})` : ""}` : "";
+    // Liberación sugerida según rangos, mientras el analista no la cambie.
+    if (!liberacionTocada) {
+      const fuera = Object.values(ev).some((x) => x === "bajo" || x === "alto");
+      liberacion.value = fuera ? "No liberado" : "Liberado";
+      bloqueNoLib.classList.toggle("hidden", liberacion.value === "Liberado");
+    }
     return { v, ev };
   }
 
-  function siguienteParada() {
-    return Math.max(0, ...paradas.filter((p) => !p.Repeticion).map((p) => p.field_1 || 0)) + 1;
+  const numeros = () => [...new Set(paradas.map((p) => p.field_1 || 0))].sort((a, b) => a - b);
+  const siguienteParada = () => Math.max(0, ...numeros()) + 1;
+  const sigRep = (n) => {
+    const reps = paradas.filter((p) => p.field_1 === n && p.Repeticion).map((p) => extras.get(p)?.numRep || 1);
+    return reps.length ? Math.max(...reps) + 1 : 1;
+  };
+  function etiquetaActual() {
+    if (tipo.value === "nueva") return { parada: siguienteParada(), repeticion: false, numRep: null, texto: `Parada ${siguienteParada()}` };
+    const n = Number(tipo.value);
+    const r = sigRep(n);
+    return { parada: n, repeticion: true, numRep: r, texto: `Parada ${n}.${r} · repetición de la ${n}` };
+  }
+  const pintarTipo = () => (nParada.textContent = etiquetaActual().texto);
+  tipo.addEventListener("change", pintarTipo);
+
+  // Precarga de sensorial/controles: parada anterior de este lote o, si es la
+  // primera, el último registro del producto. Siempre a confirmar.
+  async function precargar() {
+    let base = paradas.length ? paradas[paradas.length - 1] : null;
+    let origen = base ? `parada ${st.etiquetaParada(base, extras.get(base)?.numRep)} de este lote` : "";
+    let ex = base ? extras.get(base) : null;
+    const conDatos = (e) => e && (e.color || e.pcc1 || e.pproDesinf);
+    if (!conDatos(ex)) {
+      ex = null;
+      const ult = await st.ultimoRegistroDeProducto(prod);
+      if (ult) {
+        const e2 = await st.extrasDe(ult);
+        if (conDatos(e2)) {
+          ex = e2;
+          origen = `último lote de este producto (${ult.Title})`;
+        }
+      }
+    }
+    color.value = ex?.color || "";
+    olor.value = ex?.olor || "OK";
+    sabor.value = ex?.sabor || "OK";
+    pproD.value = ex?.pproDesinf || "";
+    pproF.value = ex?.pproFiltrado || "";
+    pcc1.value = ex?.pcc1 || "";
+    pcc2.value = ex?.pcc2 || "";
+    origenPrecarga.textContent = ex ? `Precargado de la ${origen}. Revísalo: no lo confirmes sin verificar.` : "Sin registros anteriores de este producto: completa los campos.";
+    confirma.checked = false;
+    bloqueCtrl.classList.remove("editado");
   }
 
   async function cargar() {
     const [srv, pend] = await Promise.all([st.registrosDeLote(lote), st.paradasPendientes(lote.Title)]);
-    paradas = [...srv, ...pend].sort((a, b) => (a.field_1 || 0) - (b.field_1 || 0));
-    nParada.textContent = `Parada ${siguienteParada()}`;
+    paradas = [...srv, ...pend];
+    for (const p of paradas) extras.set(p, p.pendiente ? Object.fromEntries(Object.entries(cols).map(([k, prop]) => [k, prop ? p[prop] ?? null : null])) : await st.extrasDe(p));
+    paradas.sort((a, b) => (a.field_1 || 0) - (b.field_1 || 0) || (a.Repeticion ? 1 : 0) - (b.Repeticion ? 1 : 0) || (extras.get(a)?.numRep || 0) - (extras.get(b)?.numRep || 0));
+    // opciones del tipo de parada
+    clear(tipo);
+    tipo.append(el("option", { value: "nueva" }, `Nueva: parada ${siguienteParada()}`), ...numeros().map((n) => el("option", { value: String(n) }, `Repetir parada ${n} (→ ${n}.${sigRep(n)})`)));
+    pintarTipo();
+    pintarTabla();
+    pintarMicro();
+  }
+
+  function pintarTabla() {
     clear(tabla);
     if (!paradas.length) return tabla.appendChild(el("div", { class: "vacio chico" }, "Sin paradas registradas aún."));
     const celda = (val, min, max) => {
@@ -248,70 +355,125 @@ async function pantallaLote(vista, id, prodDe) {
     };
     tabla.appendChild(
       el("table", {}, [
-        el("tr", {}, ["Parada", "°Bx", "pH", "Acidez", "Ratio", "Resp.", ""].map((x) => el("th", {}, x))),
-        ...paradas.map((p) =>
-          el("tr", {}, [
-            el("td", {}, `${p.field_1}${p.Repeticion ? " (rep.)" : ""}`),
+        el("tr", {}, ["Parada", "°Bx", "pH", "Acidez", "Ratio", "Liberación", "Resp.", ""].map((x) => el("th", {}, x))),
+        ...paradas.map((p) => {
+          const ex = extras.get(p) || {};
+          return el("tr", {}, [
+            el("td", {}, st.etiquetaParada(p, ex.numRep)),
             celda(p.field_2, prod?.field_3, prod?.field_4),
             celda(p.field_3, prod?.field_5, prod?.field_6),
             celda(p.field_4, prod?.field_7, prod?.field_8),
             celda(p.field_8, prod?.field_9, prod?.field_10),
-            el("td", {}, p.field_9 || ""),
+            el("td", { class: ex.liberacion && ex.liberacion !== "Liberado" ? "fuera" : "" }, ex.liberacion || "—"),
+            el("td", {}, st.nombreResponsable(p.field_9)),
             el("td", {}, p.pendiente ? "↻" : "✓"),
-          ])
-        ),
+          ]);
+        }),
+      ])
+    );
+  }
+
+  // Microbiología del lote (resultado de laboratorio, días después).
+  function pintarMicro() {
+    clear(micro);
+    const conID = paradas.filter((p) => p.ID);
+    if (!conID.length) return;
+    const actual = conID.map((p) => extras.get(p)).find((e) => e && (e.aerobios != null || e.mohos != null)) || {};
+    const aer = campoNum("Aerobios", { valor: actual.aerobios ?? "" });
+    const moh = campoNum("Mohos y levaduras", { valor: actual.mohos ?? "" });
+    const col = campoNum("Coliformes", { valor: actual.coliformes ?? "" });
+    const eco = campoNum("E. coli", { valor: actual.ecoli ?? "" });
+    const sal = el("input", { type: "text", value: actual.salmonella ?? "", placeholder: "Ej. Ausencia" });
+    const pendiente = actual.aerobios == null && actual.mohos == null;
+    const btnM = el("button", { class: "btn btn-sec", type: "button" }, `Guardar en las ${conID.length} paradas`);
+    btnM.addEventListener("click", async () => {
+      const n = await st.guardarMicroLote(conID, { aerobios: aer.val(), mohos: moh.val(), coliformes: col.val(), ecoli: eco.val(), salmonella: sal.value.trim() });
+      if (!n) return toast("Ingresa al menos un resultado", "err");
+      toast(`Microbiología guardada en ${n} paradas`);
+      setTimeout(cargar, 800);
+    });
+    micro.append(
+      el("details", { class: "micro" }, [
+        el("summary", {}, pendiente ? "Microbiología del lote · pendiente de laboratorio" : "Microbiología del lote · registrada"),
+        el("div", { class: "campos-3" }, [aer.wrap, moh.wrap, col.wrap, eco.wrap, el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Salmonella"), sal])]),
+        el("div", { class: "fila-botones" }, btnM),
       ])
     );
   }
 
   const btn = el("button", { class: "btn btn-verde btn-xl", type: "submit" }, "Guardar parada");
   const form = el("form", { class: "pallet-form", novalidate: "" }, [
-    el("div", { class: "fila-sep" }, [nParada, el("label", { class: "check" }, [repeticion, " Repetición de la parada anterior"])]),
+    el("div", { class: "fila-sep" }, [nParada, tipo]),
     el("div", { class: "campos-3" }, [brix.wrap, ph.wrap, acidez.wrap]),
     ratioOut,
-    el("details", { class: "tara-pallet" }, [el("summary", {}, "Recorrido / % fruta"), el("div", { class: "campos-2" }, [recorrido.wrap, fruta.wrap])]),
-    el("div", { class: "campos-2" }, [el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Responsable"), responsable]), el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Observación"), obs])]),
+    el("details", { class: "tara-pallet" }, [el("summary", {}, "Viscosidad / recorrido / % fruta"), el("div", { class: "campos-3" }, [viscosidad.wrap, recorrido.wrap, fruta.wrap])]),
+    bloqueCtrl,
+    el("div", { class: "campos-2" }, [campoSel("Liberación", liberacion), campoSel("Responsable de liberación", responsable)]),
+    bloqueNoLib,
+    obs,
     btn,
   ]);
-  repeticion.addEventListener("change", () => {
-    const n = repeticion.checked ? Math.max(1, siguienteParada() - 1) : siguienteParada();
-    nParada.textContent = `Parada ${n}${repeticion.checked ? " · repetición" : ""}`;
-  });
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const { v, ev } = evaluar();
     if (v.brix === null || v.ph === null) return toast("Ingresa al menos °Brix y pH", "err");
+    if (!confirma.checked) {
+      bloqueCtrl.scrollIntoView({ behavior: "smooth", block: "center" });
+      bloqueCtrl.classList.add("falta");
+      return toast("Confirma sensorial y controles (PPRO/PCC) de esta parada", "err");
+    }
+    if (!color.value.trim() || !pproD.value || !pproF.value || !pcc1.value || !pcc2.value) return toast("Completa color y los controles PPRO/PCC", "err");
+    if (liberacion.value !== "Liberado" && !correcciones.value.trim()) {
+      correcciones.focus();
+      return toast("Indica la corrección aplicada (parada no liberada)", "err");
+    }
     const fuera = Object.entries(ev).filter(([, x]) => x === "bajo" || x === "alto");
-    if (fuera.length && !obs.value.trim()) {
-      const ok = await confirmar(
-        "Fuera de especificación",
-        `${fuera.map(([k, x]) => `${k} ${x}`).join(", ")}. ¿Registrar igual? Se recomienda anotar la acción tomada en Observación y repetir la medición.`,
-        { si: "Registrar igual", no: "Volver" }
-      );
+    if (fuera.length && liberacion.value === "Liberado") {
+      const ok = await confirmar("Fuera de especificación", `${fuera.map(([k, x]) => `${k} ${x}`).join(", ")}, pero la parada se marca "Liberado". ¿Es correcto?`, { si: "Sí, liberar", no: "Revisar" });
       if (!ok) return;
     }
     btn.disabled = true;
-    const parada = repeticion.checked ? Math.max(1, siguienteParada() - 1) : siguienteParada();
-    await st.registrarParada(lote, prod, {
+    const et = etiquetaActual();
+    const { faltan } = await st.registrarParada(lote, prod, {
       ...v,
       ratio: v.ratio ? Math.round(v.ratio * 1e4) / 1e4 : null,
-      parada,
+      parada: et.parada,
+      repeticion: et.repeticion,
+      viscosidad: viscosidad.val(),
       recorrido: recorrido.val(),
       fruta: fruta.val(),
       responsable: responsable.value,
       obs: obs.value.trim(),
-      repeticion: repeticion.checked,
+      extra: {
+        color: color.value.trim(),
+        olor: olor.value,
+        sabor: sabor.value,
+        pproDesinf: pproD.value,
+        pproFiltrado: pproF.value,
+        pcc1: pcc1.value,
+        pcc2: pcc2.value,
+        liberacion: liberacion.value,
+        incidente: liberacion.value === "Liberado" ? "" : incidente.value.trim(),
+        correcciones: liberacion.value === "Liberado" ? "" : correcciones.value.trim(),
+        numRep: et.numRep,
+      },
     });
     btn.disabled = false;
-    toast(`Parada ${parada} registrada`);
-    for (const c of [brix, ph, acidez, recorrido, fruta]) {
+    toast(faltan.length ? `Parada guardada, pero faltan columnas en SharePoint: ${faltan.join(", ")}` : `${et.texto.split(" ·")[0]} registrada`, faltan.length ? "err" : "ok");
+    for (const c of [brix, ph, acidez, viscosidad, recorrido, fruta]) {
       c.input.value = "";
       pinta(c, null);
     }
     obs.value = "";
-    repeticion.checked = false;
+    incidente.value = "";
+    correcciones.value = "";
+    liberacionTocada = false;
     ratioOut.textContent = "";
     await cargar();
+    await precargar();
+    tipo.value = "nueva";
+    pintarTipo();
     brix.input.focus();
   });
 
@@ -324,29 +486,44 @@ async function pantallaLote(vista, id, prodDe) {
       ])
     : el("div", { class: "aviso" }, "Este producto no tiene rangos en el catálogo: se registra sin validación.");
 
+  const volverA = `#/planta/${st.diaISO(lote.Fechadeproducci_x00f3_n) || ""}`;
   vista.append(
     el("section", { class: "rec-cab" }, [
-      el("a", { href: `#/planta/${st.diaISO(lote.Fechadeproducci_x00f3_n) || ""}`, class: "volver" }, "← Producción del día"),
-      el("div", { class: "rec-titulo" }, [el("h1", {}, lote.Title), el("span", {}, prod ? `${prod.Title} · ${prod.field_1}` : "")]),
+      el("a", { href: volverA, class: "volver" }, "← Producción del día"),
+      el("div", { class: "rec-titulo" }, [
+        el("h1", {}, lote.Title),
+        el("span", {}, [prod ? `${prod.Title} · ${prod.field_1} · ` : "", `Elab. ${st.fmtDia(st.diaISO(lote.field_2))} · Cad. ${st.fmtDia(st.diaISO(lote.field_3))}`]),
+      ]),
       especif,
+      faltanCols.length ? el("div", { class: "aviso" }, `Faltan columnas en la lista Registros: ${faltanCols.join(", ")}. Esos datos no se guardarán hasta crearlas.`) : null,
     ]),
     el("div", { class: "rec-grid" }, [
       el("section", { class: "card" }, [el("h2", {}, "Nueva medición"), form]),
       el("section", { class: "card" }, [
         el("h2", {}, "Paradas del lote"),
         tabla,
-        el("div", { class: "fin-wrap" }, el("button", {
-          class: "btn btn-sec",
-          onclick: async () => {
-            if (await confirmar("Cerrar lote", `${lote.Title} pasa a "Finalizado" y deja de aparecer en la lista.`, { si: "Cerrar lote" })) {
-              await st.cerrarLote(lote);
-              toast("Lote cerrado");
-              location.hash = `#/planta/${st.diaISO(lote.Fechadeproducci_x00f3_n) || ""}`;
-            }
-          },
-        }, "Cerrar lote")),
+        micro,
+        el(
+          "div",
+          { class: "fin-wrap" },
+          el(
+            "button",
+            {
+              class: "btn btn-sec",
+              onclick: async () => {
+                if (await confirmar("Cerrar lote", `${lote.Title} pasa a "Finalizado".`, { si: "Cerrar lote" })) {
+                  await st.cerrarLote(lote);
+                  toast("Lote cerrado");
+                  location.hash = volverA;
+                }
+              },
+            },
+            "Cerrar lote"
+          )
+        ),
       ]),
     ])
   );
   await cargar();
+  await precargar();
 }

@@ -47,13 +47,46 @@ export const CONFIG = {
     "bodega2@healthyfood.com.ec": ["bodega"],
     "calidad@healthyfood.com.ec": ["calidad", "planta"],
     "calidad2@healthyfood.com.ec": ["calidad", "planta"],
-    "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta"],
+    "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta", "config"],
   },
 
   // Bodegueros activos (iniciales que se guardan en Recepciones.Bodeguero).
   bodegueros: ["AC", "BC", "JT", "JC"],
-  // Iniciales que hoy aparecen en Registros.Responsable de liberación.
-  responsablesPlanta: ["ET", "SF", "JG"],
+  // Responsables de liberación (Calidad - Planta). Valor por defecto: la lista
+  // vigente se edita en la app (Configuración, solo Sistemas) y se guarda en
+  // SharePoint, sin tocar este archivo.
+  responsablesPlanta: ["Edwin Tulcán", "Samantha Fajardo", "Paula Granja"],
+  // Registros viejos guardaban iniciales: se muestran con el nombre completo.
+  inicialesHistoricas: { ET: "Edwin Tulcán", SF: "Samantha Fajardo", JG: "John Guanochanga" },
+  // Archivo de configuración editable (responsables, bodegueros).
+  archivoConfig: { carpeta: "/sites/EspacioColaborativo/Documentos compartidos/HubRecepcion", nombre: "configuracion.json" },
+
+  // Columnas agregadas a la lista Registros para cubrir el Excel
+  // "MODELO LIBERACIONES 2026" (clave interna → nombre de la columna).
+  registrosExtra: {
+    color: "Color",
+    olor: "Olor",
+    sabor: "Sabor",
+    aerobios: "Aerobios",
+    mohos: "MohosLevaduras",
+    coliformes: "Coliformes",
+    ecoli: "EColi",
+    salmonella: "Salmonella",
+    pproDesinf: "PPRODesinfeccion",
+    pproFiltrado: "PPROFiltrado",
+    pcc1: "PCC1Pasteurizado",
+    pcc2: "PCC2Pernos",
+    liberacion: "Liberacion",
+    incidente: "DetalleIncidente",
+    correcciones: "Correcciones",
+    numRep: "NumRepeticion",
+  },
+  opciones: {
+    sensorial: ["OK", "No conforme"],
+    control: ["Cumple", "No cumple", "N/A"],
+    pcc1: ["Cumple", "No cumple", "N/A", "N/A PNP"],
+    liberacion: ["Liberado", "No liberado", "Bloqueo parcial"],
+  },
 
   // Órdenes "Programada" más viejas que esto se muestran aparte como
   // atrasadas (en la Power App seguían mezcladas con las de hoy).

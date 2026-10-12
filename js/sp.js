@@ -14,6 +14,7 @@ import { CONFIG } from "./config.js";
 import { getAccessToken } from "./auth.js";
 
 const SITE = CONFIG.sp.host + CONFIG.sp.sitePath;
+const camposCache = {};
 const JSON_NM = "application/json;odata=nometadata";
 
 function listUrl(lista) {
@@ -152,11 +153,20 @@ export const api = {
   // nombre interno (columnas agregadas a mano: no sabemos cómo las nombró
   // SharePoint). Los que empiezan con "_" llevan el prefijo "OData_".
   async propiedadDeCampo(lista, nombre) {
-    const r = await spFetch(`${listUrl(lista)}/fields?$select=Title,InternalName&$filter=Hidden eq false`);
-    const n = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const f = (r.value || []).find((x) => n(x.Title) === n(nombre) || n(x.InternalName) === n(nombre));
+    camposCache[lista] ||= spFetch(`${listUrl(lista)}/fields?$select=Title,InternalName&$filter=Hidden eq false`).then((r) => r.value || []);
+    const campos = await camposCache[lista];
+    const n = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[^a-z0-9]/g, "");
+    const f = campos.find((x) => n(x.InternalName) === n(nombre)) || campos.find((x) => n(x.Title) === n(nombre));
     if (!f) return null;
     return f.InternalName.startsWith("_") ? `OData_${f.InternalName}` : f.InternalName;
+  },
+
+  // Crea o reemplaza un archivo de texto en una carpeta del sitio.
+  async escribirArchivo(carpeta, nombre, texto) {
+    await spFetch(
+      `${SITE}/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(carpeta.replace(/'/g, "''"))}')/Files/add(url='${encodeURIComponent(nombre)}',overwrite=true)`,
+      { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: new Blob([texto], { type: "application/json" }) }
+    );
   },
 
   // URL para mostrar una imagen ya guardada (columna de imagen en JSON).

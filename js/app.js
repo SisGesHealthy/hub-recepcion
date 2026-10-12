@@ -2,7 +2,7 @@
 
 import { CONFIG } from "./config.js";
 import { el, clear } from "./dom.js";
-import { initStore, setUsuario, getUsuario, onSync, sincronizar, descartarPrimeraOperacion } from "./store.js";
+import { initStore, setUsuario, getUsuario, onSync, sincronizar, descartarPrimeraOperacion, cargarConfig } from "./store.js";
 import { confirmar } from "./ui.js";
 
 const vista = document.getElementById("vista");
@@ -10,6 +10,7 @@ const DEPTOS = {
   bodega: { titulo: "Bodega", sub: "Recepción de fruta por pallet", icono: "🚚", ruta: "#/bodega" },
   calidad: { titulo: "Calidad", sub: "Liberación de materia prima", icono: "🧪", ruta: "#/calidad" },
   planta: { titulo: "Calidad - Planta", sub: "Liberación de producto en proceso", icono: "🏭", ruta: "#/planta" },
+  config: { titulo: "Configuración", sub: "Responsables y bodegueros", icono: "⚙️", ruta: "#/config" },
 };
 
 const DEMO_USUARIOS = [
@@ -35,6 +36,7 @@ async function main() {
     setUsuario(acc.name, acc.username);
   }
   await initStore();
+  await cargarConfig();
   pintarBarra();
   window.addEventListener("hashchange", rutear);
   rutear();
@@ -118,6 +120,7 @@ async function rutear() {
   if (seccion === "bodega") (await import("./bodega.js")).render(vista, resto);
   else if (seccion === "calidad") (await import("./calidad.js")).render(vista, resto);
   else if (seccion === "planta") (await import("./planta.js")).render(vista, resto);
+  else if (seccion === "config") (await import("./configuracion.js")).render(vista);
 }
 
 function inicio(u) {

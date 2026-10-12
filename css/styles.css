@@ -258,3 +258,25 @@ a { color: inherit; text-decoration: none; }
   .of-cab { grid-template-columns: 1fr; }
   .of-lote { flex-direction: column; align-items: stretch; }
 }
+
+/* ---------- parada: sensorial/controles a confirmar, microbiología ---------- */
+.tipo-parada { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); font-size: 14px; max-width: 60%; }
+.bloque-confirmar { margin: 14px 0 4px; border: 1.5px solid var(--ambar); border-radius: 14px; padding: 10px 14px 12px; background: var(--warn-bg); }
+.bloque-confirmar legend { font-weight: 700; padding: 0 6px; }
+.bloque-confirmar.falta { border-color: var(--rojo); box-shadow: 0 0 0 3px rgba(179, 38, 30, .15); }
+.bloque-confirmar .campos-2, .bloque-confirmar .campos-3 { margin-top: 8px; }
+.bloque-confirmar select, .campos-2 select { width: 100%; }
+.check.confirmar { margin-top: 12px; color: var(--ink); font-weight: 700; font-size: 15px; }
+.check.confirmar input { width: 24px; height: 24px; }
+.micro { margin-top: 14px; border: 1px dashed var(--border); border-radius: 12px; padding: 8px 12px; }
+.micro summary { cursor: pointer; font-weight: 700; color: var(--dim); padding: 4px 0; }
+
+/* ---------- reporte de liberaciones ---------- */
+.filtros-reporte { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 8px; }
+.filtros-reporte .campo { min-width: 160px; }
+.reporte-wrap { overflow: auto; max-height: 70vh; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); }
+.doc-tabla.reporte { font-size: 12px; white-space: nowrap; }
+.doc-tabla.reporte th { position: sticky; top: 0; z-index: 1; }
+.doc-tabla.reporte th.letra { background: var(--card); color: var(--dim); text-align: center; font-weight: 600; }
+.doc-tabla.reporte td.fuera { color: var(--rojo); font-weight: 700; }
+.card.config textarea { font-size: 16px; }

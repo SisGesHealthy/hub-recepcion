@@ -68,8 +68,13 @@ export const api = {
       return null;
     }
   },
-  async leerTexto() {
-    return "demo";
+  async leerTexto(ruta) {
+    const r = await kv.get("mockfile:" + ruta);
+    if (r === null) throw Object.assign(new Error("no existe"), { status: 404 });
+    return r;
+  },
+  async escribirArchivo(carpeta, nombre, texto) {
+    await kv.set(`mockfile:${carpeta}/${nombre}`, texto);
   },
   async propiedadDeCampo(lista, nombre) {
     return nombre;
