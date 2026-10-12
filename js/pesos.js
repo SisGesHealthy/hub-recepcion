@@ -117,13 +117,15 @@ async function iniciar(of, esp, cliente, dia) {
   const analista = el("select", {}, CONFIG.responsablesPlanta.map((r) => el("option", { value: r }, r)));
   const ult = await kv.get("ultimoResponsablePlanta", "");
   if (CONFIG.responsablesPlanta.includes(ult)) analista.value = ult;
+  const sellado = el("select", {}, [el("option", { value: "" }, "No aplica"), ...["Termosellado", "Cuello de ganso"].map((t) => el("option", { value: t }, t))]);
+  sellado.value = await st.selladoRecordado(of.codigo);
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Iniciar control");
   const campo = (l, x) => el("label", { class: "campo" }, [el("span", { class: "campo-label" }, l), x]);
   const h = hoja("Nuevo control de pesos", [
     el("p", { class: "sub" }, `${of.of} · ${of.codigo} · ${of.producto}`),
     el("div", { class: "campos-2" }, [campo("Parada", parada), campo("Lote", lote)]),
     campo("Equipo dosificando", equipo),
-    campo("Analista", analista),
+    el("div", { class: "campos-2" }, [campo("Analista", analista), campo("Sellado (opcional)", sellado)]),
     el("p", { class: "nota" }, `Peso de referencia: ${num(esp.nominal, esp.unidad)}${esp.min !== null || esp.max !== null ? ` · rango ${num(esp.min, "")}– ${num(esp.max, esp.unidad)}` : " · sin rango configurado (avisar a Sistemas)"}`),
     btn,
   ]);
@@ -142,6 +144,7 @@ async function iniciar(of, esp, cliente, dia) {
       lote: lote.value.trim(),
       equipo: equipo.value.trim(),
       analista: analista.value,
+      sellado: sellado.value,
       muestras: [],
     });
     await kv.set("ultimoResponsablePlanta", analista.value);
@@ -237,6 +240,7 @@ async function pantallaVisita(vista) {
         el("span", {}, ["Mínimo ", el("b", {}, num(esp.min, u))]),
         el("span", {}, ["Máximo ", el("b", {}, num(esp.max, u))]),
         el("span", {}, ["Equipo ", el("b", {}, v.equipo.replace(/\n/g, ", "))]),
+        v.sellado ? el("span", {}, ["Sellado ", el("b", {}, v.sellado)]) : null,
       ]),
     ]),
     el("div", { class: "rec-grid" }, [
@@ -293,6 +297,8 @@ async function terminar(v) {
     foto = await comprimirFoto(fileIn.files[0]);
     fotoBtn.textContent = "📷 Foto lista ✓ (tocar para cambiar)";
   });
+  const estadoSellado = el("select", {}, [el("option", { value: "" }, "— Elegir —"), ...["Conforme", "No conforme"].map((x) => el("option", { value: x }, x))]);
+  estadoSellado.value = v.estadoSellado || "";
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Guardar control");
   const h = hoja("Terminar control de pesos", [
     el("div", { class: "resumen-tot" }, [
@@ -301,7 +307,10 @@ async function terminar(v) {
       el("div", {}, [el("small", {}, "Menor / mayor"), el("b", {}, `${num(r.menor, "")}/ ${num(r.mayor, v.esp.unidad)}`)]),
       el("div", { class: r.fuera ? "fuera" : "" }, [el("small", {}, "Fuera de rango"), el("b", {}, String(r.fuera))]),
     ]),
-    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Resultado"), resultado]),
+    el("div", { class: "campos-2" }, [
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Resultado de pesos"), resultado]),
+      v.sellado ? el("label", { class: "campo" }, [el("span", { class: "campo-label" }, `Sellado (${v.sellado})`), estadoSellado]) : null,
+    ]),
     el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Recomendaciones al personal"), reco]),
     el("div", { class: "chips" }, atajos),
     el("div", { class: "fila-botones" }, [fotoBtn]),
@@ -309,9 +318,10 @@ async function terminar(v) {
     btn,
   ]);
   btn.addEventListener("click", async () => {
-    if (resultado.value !== "Conforme" && !reco.value.trim()) return toast("Escribe la recomendación dada al personal", "err");
+    if (v.sellado && !estadoSellado.value) return toast(`Indica si el sellado (${v.sellado}) es conforme`, "err");
+    if ((resultado.value !== "Conforme" || estadoSellado.value === "No conforme") && !reco.value.trim()) return toast("Escribe la recomendación dada al personal", "err");
     btn.disabled = true;
-    await st.finalizarVisita(v, { resultado: resultado.value, recomendaciones: reco.value.trim() }, foto);
+    await st.finalizarVisita(v, { resultado: resultado.value, recomendaciones: reco.value.trim(), estadoSellado: estadoSellado.value }, foto);
     h.cerrar();
     toast("Control de pesos guardado");
     location.hash = `#/pesos/${v.dia}`;
@@ -404,6 +414,7 @@ async function pantallaControl(vista, id) {
           fila("Menor / mayor", `${num(r.menor, "")}/ ${num(r.mayor, u)}`),
           fila("Fuera de rango", String(r.fuera)),
           fila("Resultado", c.Resultado),
+          ...(c.TipoSellado ? [fila("Sellado", `${c.TipoSellado} · ${c.EstadoSellado || "sin verificar"}`)] : []),
         ]),
       ]),
       el("section", { class: "doc-sec" }, [
@@ -455,19 +466,25 @@ function editarDatos(c) {
   const resultado = el("select", {}, ["Conforme", "Con ajustes", "No conforme"].map((x) => el("option", { value: x }, x)));
   resultado.value = c.Resultado || "Conforme";
   const reco = el("textarea", { rows: "3" }, c.Recomendaciones || "");
+  const sellado = el("select", {}, [el("option", { value: "" }, "No aplica"), ...["Termosellado", "Cuello de ganso"].map((t) => el("option", { value: t }, t))]);
+  sellado.value = c.TipoSellado || "";
+  const estadoSel = el("select", {}, [el("option", { value: "" }, "—"), ...["Conforme", "No conforme"].map((x) => el("option", { value: x }, x))]);
+  estadoSel.value = c.EstadoSellado || "";
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Guardar cambios");
   const h = hoja("Editar datos del control", [
     el("div", { class: "campos-2" }, [campo("Parada", parada), campo("Lote", lote)]),
     campo("Equipo dosificando", equipo),
     el("div", { class: "campos-2" }, [campo("Analista", analista), campo("Resultado", resultado)]),
+    el("div", { class: "campos-2" }, [campo("Sellado", sellado), campo("Estado del sellado", estadoSel)]),
     campo("Recomendaciones al personal", reco),
     el("p", { class: "nota" }, "Las muestras no se editan aquí: para agregar más usa «Seguir tomando muestras»."),
     btn,
   ]);
   btn.addEventListener("click", async () => {
     if (!parada.value.trim()) return toast("La parada no puede quedar vacía", "err");
+    if (sellado.value && !estadoSel.value) return toast("Indica si el sellado es conforme", "err");
     btn.disabled = true;
-    await st.editarControl(c, { parada: parada.value.trim(), lote: lote.value.trim(), equipo: equipo.value.trim(), analista: analista.value, resultado: resultado.value, recomendaciones: reco.value.trim() });
+    await st.editarControl(c, { parada: parada.value.trim(), lote: lote.value.trim(), equipo: equipo.value.trim(), analista: analista.value, resultado: resultado.value, recomendaciones: reco.value.trim(), sellado: sellado.value, estadoSellado: estadoSel.value });
     h.cerrar();
     toast("Control actualizado");
     location.reload();

@@ -1234,7 +1234,7 @@ export function resumenMuestras(muestras, esp) {
   return { n, promedio: prom === null ? null : Math.round(prom * 100) / 100, menor: n ? Math.min(...pesos) : null, mayor: n ? Math.max(...pesos) : null, fuera };
 }
 
-export async function finalizarVisita(v, { resultado, recomendaciones }, fotoBlob) {
+export async function finalizarVisita(v, { resultado, recomendaciones, estadoSellado }, fotoBlob) {
   const r = resumenMuestras(v.muestras, v.esp);
   const campos = {
     Title: v.id,
@@ -1262,12 +1262,16 @@ export async function finalizarVisita(v, { resultado, recomendaciones }, fotoBlo
     Muestras: v.muestras.map((m, i) => `${i + 1}. ${fmtHora(m.hora)} · ${String(m.peso).replace(".", ",")} ${v.esp.unidad} · ${m.estado === "ok" ? "OK" : m.estado === "bajo" ? "BAJO" : m.estado === "alto" ? "ALTO" : "—"}`).join("\n"),
     Recomendaciones: recomendaciones || null,
     Resultado: resultado,
+    // Opcional: solo en productos donde se verifica el sellado.
+    TipoSellado: v.sellado || null,
+    EstadoSellado: v.sellado ? estadoSellado || v.estadoSellado || null : null,
   };
   const foto = fotoBlob ? { campo: "Foto", ext: "jpg" } : null;
   // Control reabierto (ya existía en SharePoint): se actualiza la misma fila.
   if (v.spId) await encolar({ tipo: "update", lista: "controlPesos", id: v.spId, campos, foto }, fotoBlob);
   else await encolar({ tipo: "add", lista: "controlPesos", clave: [["Title", "eq", v.id]], campos, foto }, fotoBlob);
   await kv.set("pesos:ultimoEquipo", v.equipo || "");
+  await kv.set(`pesos:sellado:${v.of.codigo}`, v.sellado || "");
   await descartarVisita();
   return campos;
 }
@@ -1307,6 +1311,8 @@ export async function reabrirControl(c) {
     analista: c.Analista || "",
     recomendaciones: c.Recomendaciones || "",
     resultado: c.Resultado || "",
+    sellado: c.TipoSellado || "",
+    estadoSellado: c.EstadoSellado || "",
     muestras: muestrasDeTexto(c.Muestras, dia, esp),
   };
   await guardarVisitaLocal(v);
@@ -1316,7 +1322,7 @@ export async function reabrirControl(c) {
 // Corregir datos de un control guardado (sin tocar las muestras).
 export async function editarControl(c, cambios) {
   const campos = {};
-  for (const [k, v] of Object.entries({ Parada: cambios.parada, Lote: cambios.lote, Equipo: cambios.equipo, Analista: cambios.analista, Resultado: cambios.resultado, Recomendaciones: cambios.recomendaciones }))
+  for (const [k, v] of Object.entries({ Parada: cambios.parada, Lote: cambios.lote, Equipo: cambios.equipo, Analista: cambios.analista, Resultado: cambios.resultado, Recomendaciones: cambios.recomendaciones, TipoSellado: cambios.sellado, EstadoSellado: cambios.sellado === "" ? "" : cambios.estadoSellado }))
     if (v !== undefined) campos[k] = v === "" ? null : v;
   await encolar({ tipo: "update", lista: "controlPesos", id: c.ID, campos });
   await subirAhora();
@@ -1356,3 +1362,6 @@ export async function aplicarRangoActual(c, nuevo) {
   await subirAhora();
   return { ...r, resultado };
 }
+
+// Último tipo de sellado usado con este producto (se precarga, opcional).
+export const selladoRecordado = (codigo) => kv.get(`pesos:sellado:${codigo}`, "");
