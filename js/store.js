@@ -1082,3 +1082,47 @@ export function filasATexto(filas, { encabezados = false, decimal = "," } = {}) 
   if (encabezados) lineas.unshift(COLUMNAS_EXCEL.join("\t"));
   return lineas.join("\r\n");
 }
+
+// Completar después sensorial / controles / liberación de una parada ya
+// guardada (el analista registra primero la medición y luego lo demás).
+export async function completarParada(registro, extra) {
+  const cols = await columnasRegistros();
+  const campos = {};
+  for (const [k, val] of Object.entries(extra)) if (cols[k] && val !== undefined) campos[cols[k]] = val === "" ? null : val;
+  if (!registro.ID || !Object.keys(campos).length) return false;
+  await encolar({ tipo: "update", lista: "registros", id: registro.ID, campos });
+  return true;
+}
+
+// ¿Le faltan sensorial/controles a esta parada?
+export const paradaIncompleta = (ex) => !ex || !ex.color || !ex.pproDesinf || !ex.pproFiltrado || !ex.pcc1 || !ex.pcc2 || !ex.liberacion;
+
+// Lotes de los últimos N días cuyas paradas aún no tienen microbiología
+// (los resultados llegan del laboratorio días después).
+export async function lotesMicroPendiente(dias = 21) {
+  const cols = await columnasRegistros();
+  if (!cols.aerobios) return [];
+  const desde = new Date(diaASP(sumarDias(hoyISO(), -dias)));
+  const [regs, lotes] = await Promise.all([
+    api.items("registros", { where: [["Fecha_produccion", "ge", desde]], top: 5000 }),
+    api.items("lotes", { where: [["Fechadeproducci_x00f3_n", "ge", desde]], top: 2000 }),
+  ]);
+  const grupos = {};
+  for (const r of regs) {
+    const k = `${r.Title}|${diaISO(r.Fecha_produccion)}`;
+    const g = (grupos[k] ||= { lote: r.Title, fecha: diaISO(r.Fecha_produccion), paradas: 0, conMicro: 0 });
+    g.paradas++;
+    if (r[cols.aerobios] !== null && r[cols.aerobios] !== undefined) g.conMicro++;
+  }
+  return Object.values(grupos)
+    .filter((g) => g.conMicro < g.paradas)
+    .map((g) => ({ ...g, id: lotes.find((l) => l.Title === g.lote && diaISO(l.Fechadeproducci_x00f3_n) === g.fecha)?.ID || null }))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
+// Sube lo pendiente y espera a que termine (incluida la vuelta extra para lo
+// encolado mientras subía). Sin red regresa enseguida.
+export async function subirAhora() {
+  await sincronizar();
+  await sincronizar();
+}

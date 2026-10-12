@@ -16,8 +16,43 @@ export async function render(vista, resto) {
   const prodDe = (lote) => cat.find((c) => c.ID === lote.Producto_x002d_CODId) || null;
   if (resto[0] === "lote" && resto[1]) return pantallaLote(vista, Number(resto[1]), prodDe);
   if (resto[0] === "reporte") return (await import("./reporte.js")).render(vista);
+  if (resto[0] === "micro") return pantallaMicroPendiente(vista);
   const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
   return pantallaDia(vista, dia, cat);
+}
+
+// ---------------- microbiología pendiente ----------------
+
+async function pantallaMicroPendiente(vista) {
+  const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Buscando lotes sin microbiología…"));
+  vista.append(
+    el("div", { class: "cab" }, [
+      el("div", {}, [
+        el("a", { href: `#/planta/${st.hoyISO()}`, class: "volver" }, "← Producción del día"),
+        el("h1", { class: "titulo" }, "Microbiología pendiente"),
+        el("p", { class: "sub" }, "Lotes de las últimas 3 semanas con paradas sin resultado de laboratorio"),
+      ]),
+    ]),
+    lista
+  );
+  let rows = [];
+  try {
+    rows = await st.lotesMicroPendiente(21);
+  } catch (e) {
+    return vacio(lista, "No se pudo leer SharePoint: " + e.message);
+  }
+  clear(lista);
+  if (!rows.length) return vacio(lista, "No hay lotes pendientes de microbiología. ✓");
+  for (const g of rows)
+    lista.appendChild(
+      el("div", { class: "orden lote" }, [
+        el("div", { class: "orden-info" }, [
+          el("strong", { class: "orden-prov" }, g.lote),
+          el("span", { class: "orden-fecha" }, `Producción ${st.fmtDia(g.fecha)} · ${g.paradas - g.conMicro} de ${g.paradas} paradas sin resultado`),
+        ]),
+        el("div", { class: "orden-accion" }, g.id ? el("a", { class: "btn btn-verde", href: `#/planta/lote/${g.id}` }, "Cargar resultado") : el("span", { class: "estado estado-ambar" }, "Lote no encontrado")),
+      ])
+    );
 }
 
 // ---------------- día de producción ----------------
@@ -37,6 +72,7 @@ async function pantallaDia(vista, dia, cat) {
         el("button", { class: "btn btn-sec", title: "Día siguiente", onclick: () => ir(st.sumarDias(dia, 1)) }, "›"),
         dia !== st.hoyISO() ? el("button", { class: "btn btn-sec", onclick: () => ir(st.hoyISO()) }, "Hoy") : null,
         el("button", { class: "btn btn-sec", title: "Actualizar", onclick: () => cargar() }, "↻"),
+        el("a", { class: "btn btn-sec", href: "#/planta/micro" }, "🧫 Micro pendiente"),
         el("a", { class: "btn btn-sec", href: "#/planta/reporte" }, "📊 Reporte"),
       ]),
     ]),
@@ -355,7 +391,7 @@ async function pantallaLote(vista, id, prodDe) {
     };
     tabla.appendChild(
       el("table", {}, [
-        el("tr", {}, ["Parada", "°Bx", "pH", "Acidez", "Ratio", "Liberación", "Resp.", ""].map((x) => el("th", {}, x))),
+        el("tr", {}, ["Parada", "°Bx", "pH", "Acidez", "Ratio", "Liberación", "Resp.", "", ""].map((x) => el("th", {}, x))),
         ...paradas.map((p) => {
           const ex = extras.get(p) || {};
           return el("tr", {}, [
@@ -367,10 +403,85 @@ async function pantallaLote(vista, id, prodDe) {
             el("td", { class: ex.liberacion && ex.liberacion !== "Liberado" ? "fuera" : "" }, ex.liberacion || "—"),
             el("td", {}, st.nombreResponsable(p.field_9)),
             el("td", {}, p.pendiente ? "↻" : "✓"),
+            el(
+              "td",
+              {},
+              p.ID
+                ? el("button", { class: `btn ${st.paradaIncompleta(ex) ? "btn-amarillo" : "btn-sec"} btn-mini`, type: "button", onclick: () => completar(p) }, st.paradaIncompleta(ex) ? "Completar" : "✎")
+                : ""
+            ),
           ]);
         }),
       ])
     );
+  }
+
+  // Completar o corregir sensorial / controles / liberación de una parada ya
+  // guardada. Precarga lo que tenga; si está vacío, lo de otra parada completa
+  // del lote o el último lote del producto. Siempre con confirmación explícita.
+  async function completar(p) {
+    const ex = extras.get(p) || {};
+    const propios = Object.fromEntries(Object.entries(ex).filter(([, v]) => v));
+    let base = ex;
+    let origen = "esta parada";
+    if (st.paradaIncompleta(ex)) {
+      const ant = paradas.filter((x) => x !== p && !st.paradaIncompleta(extras.get(x))).pop();
+      if (ant) {
+        base = { ...extras.get(ant), ...propios };
+        origen = `la parada ${st.etiquetaParada(ant, extras.get(ant)?.numRep)} de este lote`;
+      } else {
+        const ult = await st.ultimoRegistroDeProducto(prod);
+        const e2 = ult ? await st.extrasDe(ult) : null;
+        if (e2?.color || e2?.pcc1) {
+          base = { ...e2, ...propios };
+          origen = `el último lote de este producto (${ult.Title})`;
+        } else origen = "";
+      }
+    }
+    const c = el("input", { type: "text", value: base.color || "", placeholder: "OK o código Pantone" });
+    const mk = (ops, v) => {
+      const x = sel(ops);
+      x.value = v || "";
+      return x;
+    };
+    const o = mk(CONFIG.opciones.sensorial, base.olor || "OK");
+    const sa = mk(CONFIG.opciones.sensorial, base.sabor || "OK");
+    const d = mk(CONFIG.opciones.control, base.pproDesinf);
+    const f = mk(CONFIG.opciones.control, base.pproFiltrado);
+    const p1 = mk(CONFIG.opciones.pcc1, base.pcc1);
+    const p2 = mk(CONFIG.opciones.control, base.pcc2);
+    const lib = mk(CONFIG.opciones.liberacion, ex.liberacion || "Liberado");
+    const inc = el("textarea", { rows: "2" }, ex.incidente || "");
+    const cor = el("textarea", { rows: "2" }, ex.correcciones || "");
+    const ok = el("input", { type: "checkbox" });
+    const b = el("button", { class: "btn btn-verde btn-xl" }, "Guardar");
+    const h = hoja(`Completar parada ${st.etiquetaParada(p, ex.numRep)}`, [
+      el("p", { class: "sub" }, `°Bx ${p.field_2 ?? "—"} · pH ${p.field_3 ?? "—"} · acidez ${p.field_4 ?? "—"} · ${st.nombreResponsable(p.field_9)}`),
+      el("fieldset", { class: "bloque-confirmar" }, [
+        el("legend", {}, "Sensorial y controles"),
+        el("span", { class: "sugerido" }, origen ? `Precargado de ${origen}. Revísalo antes de confirmar.` : "Sin datos anteriores: completa los campos."),
+        el("div", { class: "campos-3" }, [el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Color"), c]), campoSel("Olor", o), campoSel("Sabor", sa)]),
+        el("div", { class: "campos-2" }, [campoSel("PPRO desinfección", d), campoSel("PPRO filtrado", f), campoSel("PCC 1 pasteurizado", p1), campoSel("PCC 2 pernos y tuercas", p2)]),
+        el("label", { class: "check confirmar" }, [ok, " Revisé y confirmo que estos datos corresponden a ESTA parada"]),
+      ]),
+      el("div", { class: "campos-2" }, [campoSel("Liberación", lib)]),
+      el("div", { class: "campos-2" }, [campoSel("Detalle del incidente", inc), campoSel("Correcciones", cor)]),
+      b,
+    ]);
+    b.addEventListener("click", async () => {
+      if (!ok.checked) return toast("Marca la confirmación de sensorial y controles", "err");
+      if (!c.value.trim() || !d.value || !f.value || !p1.value || !p2.value) return toast("Completa color y los controles PPRO/PCC", "err");
+      if (lib.value !== "Liberado" && !cor.value.trim()) return toast("Indica la corrección aplicada (parada no liberada)", "err");
+      b.disabled = true;
+      await st.completarParada(p, {
+        color: c.value.trim(), olor: o.value, sabor: sa.value, pproDesinf: d.value, pproFiltrado: f.value, pcc1: p1.value, pcc2: p2.value,
+        liberacion: lib.value, incidente: lib.value === "Liberado" ? "" : inc.value.trim(), correcciones: lib.value === "Liberado" ? "" : cor.value.trim(),
+      });
+      h.cerrar();
+      toast(`Parada ${st.etiquetaParada(p, ex.numRep)} completada`);
+      await st.subirAhora();
+      await cargar();
+    });
   }
 
   // Microbiología del lote (resultado de laboratorio, días después).
@@ -418,12 +529,21 @@ async function pantallaLote(vista, id, prodDe) {
     e.preventDefault();
     const { v, ev } = evaluar();
     if (v.brix === null || v.ph === null) return toast("Ingresa al menos °Brix y pH", "err");
+    // Se puede registrar primero la medición y completar sensorial/controles
+    // después desde la tabla ("Completar"), como trabajaban con la Power App.
+    let soloMedicion = false;
     if (!confirma.checked) {
-      bloqueCtrl.scrollIntoView({ behavior: "smooth", block: "center" });
-      bloqueCtrl.classList.add("falta");
-      return toast("Confirma sensorial y controles (PPRO/PCC) de esta parada", "err");
-    }
-    if (!color.value.trim() || !pproD.value || !pproF.value || !pcc1.value || !pcc2.value) return toast("Completa color y los controles PPRO/PCC", "err");
+      soloMedicion = await confirmar(
+        "¿Guardar solo la medición?",
+        "Sensorial y controles (PPRO/PCC) quedarán PENDIENTES en esta parada. Podrás completarlos luego con «Completar» en la tabla de paradas.",
+        { si: "Guardar solo medición", no: "Volver y confirmar" }
+      );
+      if (!soloMedicion) {
+        bloqueCtrl.scrollIntoView({ behavior: "smooth", block: "center" });
+        bloqueCtrl.classList.add("falta");
+        return;
+      }
+    } else if (!color.value.trim() || !pproD.value || !pproF.value || !pcc1.value || !pcc2.value) return toast("Completa color y los controles PPRO/PCC", "err");
     if (liberacion.value !== "Liberado" && !correcciones.value.trim()) {
       correcciones.focus();
       return toast("Indica la corrección aplicada (parada no liberada)", "err");
@@ -446,13 +566,9 @@ async function pantallaLote(vista, id, prodDe) {
       responsable: responsable.value,
       obs: obs.value.trim(),
       extra: {
-        color: color.value.trim(),
-        olor: olor.value,
-        sabor: sabor.value,
-        pproDesinf: pproD.value,
-        pproFiltrado: pproF.value,
-        pcc1: pcc1.value,
-        pcc2: pcc2.value,
+        ...(soloMedicion
+          ? {}
+          : { color: color.value.trim(), olor: olor.value, sabor: sabor.value, pproDesinf: pproD.value, pproFiltrado: pproF.value, pcc1: pcc1.value, pcc2: pcc2.value }),
         liberacion: liberacion.value,
         incidente: liberacion.value === "Liberado" ? "" : incidente.value.trim(),
         correcciones: liberacion.value === "Liberado" ? "" : correcciones.value.trim(),
@@ -460,7 +576,12 @@ async function pantallaLote(vista, id, prodDe) {
       },
     });
     btn.disabled = false;
-    toast(faltan.length ? `Parada guardada, pero faltan columnas en SharePoint: ${faltan.join(", ")}` : `${et.texto.split(" ·")[0]} registrada`, faltan.length ? "err" : "ok");
+    toast(
+      faltan.length
+        ? `Parada guardada, pero faltan columnas en SharePoint: ${faltan.join(", ")}`
+        : `${et.texto.split(" ·")[0]} registrada${soloMedicion ? " · sensorial y controles pendientes" : ""}`,
+      faltan.length ? "err" : "ok"
+    );
     for (const c of [brix, ph, acidez, viscosidad, recorrido, fruta]) {
       c.input.value = "";
       pinta(c, null);
@@ -470,6 +591,7 @@ async function pantallaLote(vista, id, prodDe) {
     correcciones.value = "";
     liberacionTocada = false;
     ratioOut.textContent = "";
+    await st.subirAhora();
     await cargar();
     await precargar();
     tipo.value = "nueva";
