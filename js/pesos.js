@@ -18,6 +18,7 @@ const num = (v, u) => (v === null || v === undefined ? "—" : `${String(Math.ro
 export async function render(vista, resto) {
   if (resto[0] === "parametros") return esAdmin() ? parametros(vista) : vacio(vista, "Solo Sistemas administra los parámetros de peso.");
   if (resto[0] === "visita") return pantallaVisita(vista);
+  if (resto[0] === "control" && resto[1]) return pantallaControl(vista, Number(resto[1]));
   const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
   return pantallaDia(vista, dia);
 }
@@ -85,12 +86,15 @@ async function pantallaDia(vista, dia) {
               "div",
               { class: "of-lotes" },
               suyos.map((c) =>
-                el("div", { class: "of-lote" }, [
+                el(c.ID ? "a" : "div", { class: "of-lote control-fila", ...(c.ID ? { href: `#/pesos/control/${c.ID}` } : {}) }, [
                   el("div", { class: "orden-info" }, [
                     el("strong", {}, `${st.fmtHora(c.HoraInicio)} · Parada ${c.Parada || "—"}${c.Lote ? ` · ${c.Lote}` : ""}${c.pendiente ? " ↻" : ""}`),
                     el("span", { class: "orden-fecha" }, `${c.NMuestras} muestras · promedio ${num(c.Promedio, c.Unidad)} · ${c.FueraDeRango || 0} fuera de rango · ${c.Analista || ""}`),
                   ]),
-                  el("span", { class: `estado ${c.Resultado === "Conforme" ? "estado-verde" : c.Resultado === "No conforme" ? "estado-rojo" : "estado-ambar"}` }, c.Resultado || ""),
+                  el("div", { class: "control-der" }, [
+                    el("span", { class: `estado ${c.Resultado === "Conforme" ? "estado-verde" : c.Resultado === "No conforme" ? "estado-rojo" : "estado-ambar"}` }, c.Resultado || ""),
+                    c.ID ? el("span", { class: "btn btn-sec btn-mini" }, "Ver / editar / imprimir") : el("span", { class: "nota" }, "subiendo…"),
+                  ]),
                 ])
               )
             )
@@ -277,7 +281,7 @@ async function terminar(v) {
   const sugerido = r.fuera === 0 ? "Conforme" : finalOk ? "Con ajustes" : "No conforme";
   const resultado = el("select", {}, ["Conforme", "Con ajustes", "No conforme"].map((x) => el("option", { value: x }, x)));
   resultado.value = sugerido;
-  const reco = el("textarea", { rows: "3", placeholder: "Indicaciones al personal (ej. subir dosificación 2 g)" });
+  const reco = el("textarea", { rows: "3", placeholder: "Indicaciones al personal (ej. subir dosificación 2 g)" }, v.recomendaciones || "");
   const atajos = ["Peso dentro de rango, sin novedad", "Se indicó subir la dosificación", "Se indicó bajar la dosificación", "Se calibró el dosificador"].map((t) =>
     el("button", { class: "chip", type: "button", onclick: () => (reco.value = reco.value ? `${reco.value}. ${t}` : t) }, t)
   );
@@ -311,6 +315,135 @@ async function terminar(v) {
     h.cerrar();
     toast("Control de pesos guardado");
     location.hash = `#/pesos/${v.dia}`;
+  });
+}
+
+// ---------------- control guardado: ver, editar, seguir, imprimir ----------------
+
+async function pantallaControl(vista, id) {
+  vista.appendChild(el("div", { class: "cargando" }, "Cargando control…"));
+  let c = null;
+  try {
+    c = await st.getControl(id);
+  } catch {}
+  clear(vista);
+  if (!c) return vacio(vista, "Control no encontrado (sin conexión o eliminado).");
+  const dia = st.diaISO(c.Fecha);
+  const u = c.Unidad || "g";
+  const esp = { nominal: c.PesoNominal, min: c.PesoMinimo ?? null, max: c.PesoMaximo ?? null, unidad: u };
+  const muestras = st.muestrasDeTexto(c.Muestras, dia, esp);
+  const r = st.resumenMuestras(muestras, esp);
+  const enCurso = await st.visitaActual();
+  const fila = (k, v) => el("div", { class: "dato" }, [el("span", {}, k), el("b", {}, v || "—")]);
+
+  const seguir = async () => {
+    if (enCurso && enCurso.id !== c.Title) return toast("Hay otro control en curso: termínalo o descártalo primero", "err");
+    await st.reabrirControl(c);
+    location.hash = "#/pesos/visita";
+  };
+
+  vista.append(
+    el("div", { class: "no-print acciones-resumen" }, [
+      el("a", { href: `#/pesos/${dia}`, class: "volver" }, "← Control de pesos"),
+      el("div", { class: "fila-botones" }, [
+        el("button", { class: "btn btn-sec", onclick: () => editarDatos(c) }, "✎ Editar datos"),
+        el("button", { class: "btn btn-verde", onclick: seguir }, "➕ Seguir tomando muestras"),
+        el("button", { class: "btn btn-azul", onclick: () => window.print() }, "🖨 Imprimir"),
+      ]),
+    ]),
+    el("article", { class: "resumen-doc" }, [
+      el("header", { class: "doc-cab" }, [
+        el("img", { src: "icons/logo.png", alt: "Healthy Food" }),
+        el("div", {}, [el("h1", {}, "Registro de control de pesos"), el("span", {}, `${c.OrdenFabricacion} · ${st.fmtDia(dia)} · ${st.fmtHora(c.HoraInicio)}–${st.fmtHora(c.HoraFin)}`)]),
+      ]),
+      el("section", { class: "doc-sec" }, [
+        el("h2", {}, "Datos"),
+        el("div", { class: "datos" }, [
+          fila("Producto", `${c.CodigoProducto} · ${c.Producto}`),
+          fila("Cliente", c.Cliente),
+          fila("Lote", c.Lote),
+          fila("Parada", c.Parada),
+          fila("Analista", c.Analista),
+          fila("Equipo dosificando", (c.Equipo || "").replace(/\n/g, ", ")),
+        ]),
+      ]),
+      el("section", { class: "doc-sec" }, [
+        el("h2", {}, "Especificación y resultado"),
+        el("div", { class: "datos" }, [
+          fila("Peso nominal", num(c.PesoNominal, u)),
+          fila("Rango", c.PesoMinimo == null && c.PesoMaximo == null ? "Sin rango configurado" : `${num(c.PesoMinimo, "")}– ${num(c.PesoMaximo, u)}`),
+          fila("Muestras", String(r.n)),
+          fila("Promedio", num(r.promedio, u)),
+          fila("Menor / mayor", `${num(r.menor, "")}/ ${num(r.mayor, u)}`),
+          fila("Fuera de rango", String(r.fuera)),
+          fila("Resultado", c.Resultado),
+        ]),
+      ]),
+      el("section", { class: "doc-sec" }, [
+        el("h2", {}, "Muestras"),
+        el("table", { class: "doc-tabla muestras-tabla" }, [
+          el("tr", {}, ["N°", "Hora", `Peso (${u})`, "Estado"].map((x) => el("th", {}, x))),
+          ...muestras.map((m, i) =>
+            el("tr", { class: m.estado === "bajo" || m.estado === "alto" ? "fuera-fila" : "" }, [
+              el("td", {}, String(i + 1)),
+              el("td", {}, st.fmtHora(m.hora)),
+              el("td", {}, String(m.peso).replace(".", ",")),
+              el("td", {}, m.estado === "ok" ? "OK" : m.estado === "bajo" ? "BAJO" : m.estado === "alto" ? "ALTO" : "—"),
+            ])
+          ),
+        ]),
+      ]),
+      el("section", { class: "doc-sec" }, [el("h2", {}, "Recomendaciones al personal"), el("p", {}, c.Recomendaciones || "—")]),
+      c.Foto
+        ? el("section", { class: "doc-sec" }, [el("h2", {}, "Foto de la visita"), imagenSP({ lista: "controlPesos", id: c.ID, valor: c.Foto })])
+        : null,
+      el("section", { class: "doc-sec firmas" }, [
+        el("div", {}, [el("span", { class: "linea-firma" }), el("small", {}, `Analista: ${c.Analista || ""}`)]),
+        el("div", {}, [el("span", { class: "linea-firma" }), el("small", {}, "Supervisor de producción")]),
+      ]),
+    ])
+  );
+}
+
+// Foto guardada en SharePoint (se baja con el token del usuario).
+function imagenSP(remota) {
+  const img = el("img", { class: "firma-img", alt: "Foto de la visita" });
+  (async () => {
+    try {
+      const api = st.getApi();
+      const url = api.imageUrl(remota.lista, remota.id, remota.valor);
+      if (url) img.src = URL.createObjectURL(await api.fetchImage(url));
+    } catch {}
+  })();
+  return img;
+}
+
+function editarDatos(c) {
+  const campo = (l, x) => el("label", { class: "campo" }, [el("span", { class: "campo-label" }, l), x]);
+  const parada = el("input", { type: "text", value: c.Parada || "" });
+  const lote = el("input", { type: "text", value: c.Lote || "" });
+  const equipo = el("textarea", { rows: "3" }, c.Equipo || "");
+  const analista = el("select", {}, [...new Set([...CONFIG.responsablesPlanta, c.Analista].filter(Boolean))].map((r) => el("option", { value: r }, r)));
+  analista.value = c.Analista || CONFIG.responsablesPlanta[0];
+  const resultado = el("select", {}, ["Conforme", "Con ajustes", "No conforme"].map((x) => el("option", { value: x }, x)));
+  resultado.value = c.Resultado || "Conforme";
+  const reco = el("textarea", { rows: "3" }, c.Recomendaciones || "");
+  const btn = el("button", { class: "btn btn-verde btn-xl" }, "Guardar cambios");
+  const h = hoja("Editar datos del control", [
+    el("div", { class: "campos-2" }, [campo("Parada", parada), campo("Lote", lote)]),
+    campo("Equipo dosificando", equipo),
+    el("div", { class: "campos-2" }, [campo("Analista", analista), campo("Resultado", resultado)]),
+    campo("Recomendaciones al personal", reco),
+    el("p", { class: "nota" }, "Las muestras no se editan aquí: para agregar más usa «Seguir tomando muestras»."),
+    btn,
+  ]);
+  btn.addEventListener("click", async () => {
+    if (!parada.value.trim()) return toast("La parada no puede quedar vacía", "err");
+    btn.disabled = true;
+    await st.editarControl(c, { parada: parada.value.trim(), lote: lote.value.trim(), equipo: equipo.value.trim(), analista: analista.value, resultado: resultado.value, recomendaciones: reco.value.trim() });
+    h.cerrar();
+    toast("Control actualizado");
+    location.reload();
   });
 }
 

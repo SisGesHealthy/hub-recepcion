@@ -1263,8 +1263,61 @@ export async function finalizarVisita(v, { resultado, recomendaciones }, fotoBlo
     Recomendaciones: recomendaciones || null,
     Resultado: resultado,
   };
-  await encolar({ tipo: "add", lista: "controlPesos", clave: [["Title", "eq", v.id]], campos, foto: fotoBlob ? { campo: "Foto", ext: "jpg" } : null }, fotoBlob);
+  const foto = fotoBlob ? { campo: "Foto", ext: "jpg" } : null;
+  // Control reabierto (ya existía en SharePoint): se actualiza la misma fila.
+  if (v.spId) await encolar({ tipo: "update", lista: "controlPesos", id: v.spId, campos, foto }, fotoBlob);
+  else await encolar({ tipo: "add", lista: "controlPesos", clave: [["Title", "eq", v.id]], campos, foto }, fotoBlob);
   await kv.set("pesos:ultimoEquipo", v.equipo || "");
   await descartarVisita();
   return campos;
+}
+
+export async function getControl(id) {
+  return (await api.items("controlPesos", { where: [["ID", "eq", id]], top: 1 }))[0] || null;
+}
+
+// "1. 10:32 · 398,5 g · OK" → { peso, hora (ISO del día del control), estado }
+export function muestrasDeTexto(texto, dia, esp) {
+  return (texto || "")
+    .split("\n")
+    .map((l) => l.match(/^\s*\d+\.\s*(\d{1,2}:\d{2})\s*·\s*([\d.,]+)\s*\S*\s*·/))
+    .filter(Boolean)
+    .map((m) => {
+      const peso = Number(m[2].replace(",", "."));
+      return { peso, hora: new Date(`${dia}T${m[1].padStart(5, "0")}:00-05:00`).toISOString(), estado: estadoPeso(peso, esp) };
+    });
+}
+
+// Retomar un control ya guardado para seguir tomando muestras: se arma la
+// visita local con sus muestras; al terminar se actualiza la MISMA fila.
+export async function reabrirControl(c) {
+  const dia = diaISO(c.Fecha);
+  const esp = { nominal: c.PesoNominal, min: c.PesoMinimo ?? null, max: c.PesoMaximo ?? null, unidad: c.Unidad || "g", origen: "registro" };
+  const v = {
+    id: c.Title,
+    spId: c.ID,
+    dia,
+    inicio: c.HoraInicio,
+    of: { of: c.OrdenFabricacion, codigo: c.CodigoProducto, producto: c.Producto },
+    esp,
+    cliente: c.Cliente || "",
+    parada: c.Parada || "",
+    lote: c.Lote || "",
+    equipo: c.Equipo || "",
+    analista: c.Analista || "",
+    recomendaciones: c.Recomendaciones || "",
+    resultado: c.Resultado || "",
+    muestras: muestrasDeTexto(c.Muestras, dia, esp),
+  };
+  await guardarVisitaLocal(v);
+  return v;
+}
+
+// Corregir datos de un control guardado (sin tocar las muestras).
+export async function editarControl(c, cambios) {
+  const campos = {};
+  for (const [k, v] of Object.entries({ Parada: cambios.parada, Lote: cambios.lote, Equipo: cambios.equipo, Analista: cambios.analista, Resultado: cambios.resultado, Recomendaciones: cambios.recomendaciones }))
+    if (v !== undefined) campos[k] = v === "" ? null : v;
+  await encolar({ tipo: "update", lista: "controlPesos", id: c.ID, campos });
+  await subirAhora();
 }
