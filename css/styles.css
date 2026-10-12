@@ -331,3 +331,5 @@ a.control-fila { color: inherit; text-decoration: none; }
 .firmas > div { display: flex; flex-direction: column; gap: 4px; }
 .linea-firma { border-bottom: 1px solid var(--ink); height: 40px; }
 @media print { .muestras-tabla { font-size: 11px; } }
+
+.resumen-doc .doc-sec > p { white-space: pre-line; }

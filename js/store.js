@@ -1321,3 +1321,38 @@ export async function editarControl(c, cambios) {
   await encolar({ tipo: "update", lista: "controlPesos", id: c.ID, campos });
   await subirAhora();
 }
+
+// Resultado sugerido de un control: sin muestras fuera → Conforme; hubo fuera
+// pero las 2 últimas ya están en rango → Con ajustes; si no → No conforme.
+export function resultadoSugerido(muestras, esp) {
+  const r = resumenMuestras(muestras, esp);
+  if (!r.fuera) return "Conforme";
+  const ult = muestras.slice(-2);
+  return ult.length === 2 && ult.every((m) => !["bajo", "alto"].includes(estadoPeso(m.peso, esp))) ? "Con ajustes" : "No conforme";
+}
+
+const lineaMuestra = (m, i, unidad) =>
+  `${i + 1}. ${fmtHora(m.hora)} · ${String(m.peso).replace(".", ",")} ${unidad} · ${m.estado === "ok" ? "OK" : m.estado === "bajo" ? "BAJO" : m.estado === "alto" ? "ALTO" : "—"}`;
+
+// Control hecho SIN rango: aplica el rango configurado hoy, recalcula estado
+// de cada muestra, fuera de rango y resultado, y deja constancia en
+// Recomendaciones de que el rango se aplicó después (trazabilidad).
+export async function aplicarRangoActual(c, nuevo) {
+  const dia = diaISO(c.Fecha);
+  const esp = { nominal: c.PesoNominal, min: nuevo.min, max: nuevo.max, unidad: c.Unidad || nuevo.unidad || "g" };
+  const muestras = muestrasDeTexto(c.Muestras, dia, esp);
+  const r = resumenMuestras(muestras, esp);
+  const resultado = resultadoSugerido(muestras, esp);
+  const nota = `[Rango ${String(nuevo.min).replace(".", ",")}–${String(nuevo.max).replace(".", ",")} ${esp.unidad} aplicado después del control el ${fmtFecha(new Date().toISOString())} por ${usuario?.nombre || ""}; resultado anterior: ${c.Resultado || "—"}]`;
+  const campos = {
+    PesoMinimo: nuevo.min,
+    PesoMaximo: nuevo.max,
+    FueraDeRango: r.fuera,
+    Resultado: resultado,
+    Muestras: muestras.map((m, i) => lineaMuestra(m, i, esp.unidad)).join("\n"),
+    Recomendaciones: [c.Recomendaciones, nota].filter(Boolean).join("\n"),
+  };
+  await encolar({ tipo: "update", lista: "controlPesos", id: c.ID, campos });
+  await subirAhora();
+  return { ...r, resultado };
+}

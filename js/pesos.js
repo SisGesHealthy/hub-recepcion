@@ -336,6 +336,32 @@ async function pantallaControl(vista, id) {
   const enCurso = await st.visitaActual();
   const fila = (k, v) => el("div", { class: "dato" }, [el("span", {}, k), el("b", {}, v || "—")]);
 
+  // Control hecho sin rango y hoy el producto ya tiene rango configurado.
+  let rangoHoy = null;
+  if (c.PesoMinimo == null && c.PesoMaximo == null) {
+    const e = st.especPeso({ codigo: c.CodigoProducto, producto: c.Producto }, await st.parametrosPeso());
+    if (e.min != null && e.max != null) rangoHoy = e;
+  }
+  const aplicarRango = async () => {
+    const espN = { ...esp, min: rangoHoy.min, max: rangoHoy.max };
+    const ms = st.muestrasDeTexto(c.Muestras, dia, espN);
+    const rn = st.resumenMuestras(ms, espN);
+    const res = st.resultadoSugerido(ms, espN);
+    const altas = ms.filter((m) => m.estado === "alto").length;
+    const bajas = ms.filter((m) => m.estado === "bajo").length;
+    const ok = await confirmar(
+      "Aplicar rango actual",
+      `Rango ${num(rangoHoy.min, "")}– ${num(rangoHoy.max, u)} (configurado después de este control).\n\n` +
+        `Con ese rango: ${rn.fuera} de ${rn.n} muestras fuera (${altas} altas, ${bajas} bajas); promedio ${num(rn.promedio, u)}.\n` +
+        `Resultado: ${c.Resultado || "—"} → ${res}.\n\nQueda anotado en Recomendaciones que el rango se aplicó después.`,
+      { si: "Aplicar rango" }
+    );
+    if (!ok) return;
+    await st.aplicarRangoActual(c, rangoHoy);
+    toast("Rango aplicado y control recalculado");
+    location.reload();
+  };
+
   const seguir = async () => {
     if (enCurso && enCurso.id !== c.Title) return toast("Hay otro control en curso: termínalo o descártalo primero", "err");
     await st.reabrirControl(c);
@@ -346,6 +372,7 @@ async function pantallaControl(vista, id) {
     el("div", { class: "no-print acciones-resumen" }, [
       el("a", { href: `#/pesos/${dia}`, class: "volver" }, "← Control de pesos"),
       el("div", { class: "fila-botones" }, [
+        rangoHoy ? el("button", { class: "btn btn-amarillo", onclick: aplicarRango }, `Aplicar rango actual (${num(rangoHoy.min, "")}– ${num(rangoHoy.max, u)})`) : null,
         el("button", { class: "btn btn-sec", onclick: () => editarDatos(c) }, "✎ Editar datos"),
         el("button", { class: "btn btn-verde", onclick: seguir }, "➕ Seguir tomando muestras"),
         el("button", { class: "btn btn-azul", onclick: () => window.print() }, "🖨 Imprimir"),
