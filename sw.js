@@ -2,7 +2,7 @@
 // en la bodega. Los datos viven en IndexedDB (cola de subida), no aquí.
 // "Red primero" (lección de Hub Limpieza: con "caché primero" los equipos se
 // quedaban para siempre con la primera versión del JS).
-const CACHE_NAME = "hub-recepcion-v18";
+const CACHE_NAME = "hub-recepcion-v19";
 const SHELL_FILES = [
   "./", "./index.html", "./manifest.json", "./css/styles.css", "./icons/logo.png", "./icons/icon-192.png",
   "./js/app.js", "./js/config.js", "./js/auth.js", "./js/sp.js", "./js/db.js", "./js/dom.js", "./js/ui.js",
@@ -20,13 +20,24 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+function pedir(req, url) {
+  if (url.origin !== self.location.origin) return fetch(req);
+  // La página en sí va tal cual (copiar una navegación rompe las redirecciones
+  // de GitHub Pages); lo que se quedaba viejo eran los .js y .css.
+  if (req.mode === "navigate") return fetch(req);
+  return fetch(new Request(req, { cache: "no-cache" }));
+}
+
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET") return;
   if (url.hostname.endsWith("sharepoint.com") || url.hostname.includes("login.microsoftonline.com")) return;
   if (url.protocol !== "http:" && url.protocol !== "https:") return;
   event.respondWith(
-    fetch(event.request)
+    // cache: "no-cache": el navegador confirma con GitHub si el archivo cambió
+    // (GitHub Pages pide guardarlo 10 min y la app seguía mostrando la versión
+    // anterior). Si no cambió, GitHub responde 304 y no se descarga de nuevo.
+    pedir(event.request, url)
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
