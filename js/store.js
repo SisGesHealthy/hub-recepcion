@@ -32,9 +32,12 @@ export function getApi() {
 
 // ---------------- usuario y accesos ----------------
 
+export const MODULOS = ["bodega", "calidad", "planta", "pesos", "config"];
+const accesosDe = (c) => (c === CONFIG.administrador ? [...MODULOS] : CONFIG.accesos[c] || []);
+
 export function setUsuario(nombre, correo) {
   const c = (correo || "").toLowerCase();
-  usuario = { nombre, correo: c, accesos: CONFIG.accesos[c] || [] };
+  usuario = { nombre, correo: c, accesos: accesosDe(c) };
   return usuario;
 }
 export const getUsuario = () => usuario;
@@ -968,6 +971,11 @@ export async function cerrarLote(lote) {
 // (Documentos compartidos/HubRecepcion/configuracion.json) que Sistemas edita
 // desde la app. Si no existe o no hay red, se usa lo de config.js / la copia.
 function aplicarConfig(cfg) {
+  if (cfg?.accesos && Object.keys(cfg.accesos).length) {
+    // La lista guardada reemplaza a la de config.js (así se pueden quitar cuentas).
+    CONFIG.accesos = Object.fromEntries(Object.entries(cfg.accesos).map(([k, v]) => [k.trim().toLowerCase(), v.filter((m) => MODULOS.includes(m))]));
+    if (usuario) usuario.accesos = accesosDe(usuario.correo);
+  }
   if (cfg?.responsablesPlanta?.length) CONFIG.responsablesPlanta = cfg.responsablesPlanta;
   if (cfg?.bodegueros?.length) CONFIG.bodegueros = cfg.bodegueros;
   if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
@@ -979,6 +987,9 @@ function aplicarConfig(cfg) {
 // La pantalla de Configuración sí espera ({ esperar: true }).
 export async function cargarConfig({ esperar = false } = {}) {
   const cache = await kv.get("cache:config");
+  // Primera vez en este equipo (sin copia): hay que esperar, porque de ahí
+  // salen los accesos de las cuentas agregadas en Configuración.
+  if (!cache) esperar = true;
   aplicarConfig(cache);
   const { carpeta, nombre } = CONFIG.archivoConfig;
   const descarga = api

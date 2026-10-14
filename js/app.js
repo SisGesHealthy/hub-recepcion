@@ -158,7 +158,7 @@ function sinAcceso(u) {
   vista.appendChild(
     el("div", { class: "vacio" }, [
       el("h2", {}, "Sin acceso"),
-      el("p", {}, `La cuenta ${u.correo} no tiene asignado este departamento. Pide a Sistemas que la agregue en config.js → accesos.`),
+      el("p", {}, `La cuenta ${u.correo} no tiene asignado este departamento. Pide a Sistemas que te dé acceso en Configuración → Cuentas con acceso.`),
     ])
   );
 }

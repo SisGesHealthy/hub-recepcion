@@ -333,3 +333,15 @@ a.control-fila { color: inherit; text-decoration: none; }
 @media print { .muestras-tabla { font-size: 11px; } }
 
 .resumen-doc .doc-sec > p { white-space: pre-line; }
+
+/* configuración: cuentas con acceso */
+.card.config { margin-bottom: 16px; }
+.tabla-accesos { white-space: normal; }
+.tabla-accesos th { text-align: center; font-size: 13px; }
+.tabla-accesos td.td-check { text-align: center; }
+.tabla-accesos td.td-check input { width: 22px; height: 22px; }
+.tabla-accesos .in-correo { width: 100%; min-width: 230px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; }
+.tabla-accesos tr.fila-admin td { background: var(--brand-50); text-align: center; }
+.tabla-accesos tr.fila-admin td:first-child { text-align: left; }
+.fila-botones.izq { justify-content: flex-start; }
+.fila-botones.izq > * { flex: none; }

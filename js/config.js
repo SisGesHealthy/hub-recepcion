@@ -45,6 +45,11 @@ export const CONFIG = {
   // Acceso por correo de la cuenta Microsoft con la que se inicia sesión
   // (igual que la pantalla principal de la Power App). Correo no listado →
   // sin acceso.
+  // Administrador fijo: siempre tiene todo, aunque se edite la lista de
+  // accesos en Configuración (así nadie queda fuera de Configuración por error).
+  administrador: "sistemasdegestion@healthyfood.com.ec",
+  // Valor inicial; la lista vigente se edita en la app (Configuración →
+  // Cuentas con acceso) y se guarda en configuracion.json.
   accesos: {
     "bodega2@healthyfood.com.ec": ["bodega"],
     "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos"],
