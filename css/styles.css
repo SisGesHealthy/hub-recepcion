@@ -279,6 +279,20 @@ a { color: inherit; text-decoration: none; }
 .doc-tabla.reporte th { position: sticky; top: 0; z-index: 1; }
 .doc-tabla.reporte th.letra { background: var(--card); color: var(--dim); text-align: center; font-weight: 600; }
 .doc-tabla.reporte td.fuera { color: var(--rojo); font-weight: 700; }
+.doc-tabla.reporte td.ok { color: var(--verde); font-weight: 700; }
+.doc-tabla.reporte td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.doc-tabla.reporte td.aviso-td { color: var(--ambar); font-weight: 600; }
+
+/* ---------- historial de liberaciones (Calidad) ---------- */
+.hist-tabla tr.clic { cursor: pointer; }
+.hist-tabla tr.clic:hover td { background: var(--ok-bg); }
+.hist-resumen { margin: 4px 0 10px; }
+.hist-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.hist-kpi { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; }
+.hist-kpi b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.hist-kpi span { color: var(--dim); font-size: 13px; }
+.hist-kpi.rojo b { color: var(--rojo); }
+.hist-kpi.ambar b { color: var(--ambar); }
 .card.config textarea { font-size: 16px; }
 
 .btn-mini { min-height: 32px; padding: 4px 10px; font-size: 13px; }

@@ -56,7 +56,7 @@ export async function lista(vista) {
   cargar();
 }
 
-export async function detalle(vista, id) {
+export async function detalle(vista, id, { volver = ["#/bodega/recepciones", "← Recepciones cerradas"], reenviar = true } = {}) {
   vista.appendChild(el("div", { class: "cargando" }, "Cargando resumen…"));
   let d;
   try {
@@ -86,9 +86,9 @@ export async function detalle(vista, id) {
 
   vista.append(
     el("div", { class: "no-print acciones-resumen" }, [
-      el("a", { href: "#/bodega/recepciones", class: "volver" }, "← Recepciones cerradas"),
+      el("a", { href: volver[0], class: "volver" }, volver[1]),
       el("div", { class: "fila-botones" }, [
-        el("button", {
+        !reenviar ? null : el("button", {
           class: "btn btn-sec",
           onclick: async () => {
             if (!(await confirmar("Reenviar resumen", `Se vuelve a enviar el correo a ${rec.Correo || "(sin correo)"} y a los responsables internos.`, { si: "Reenviar" }))) return;
@@ -171,7 +171,7 @@ export async function detalle(vista, id) {
         el("h2", {}, "Firma del proveedor"),
         rec.FirmaProveedor ? imagen({ remota: { lista: "recepciones", id: rec.ID, valor: rec.FirmaProveedor } }, "firma-img") : el("p", {}, "Sin firma"),
       ]),
-      el("section", { class: "doc-sec no-print" }, [el("h2", {}, "Correo"), envio]),
+      reenviar ? el("section", { class: "doc-sec no-print" }, [el("h2", {}, "Correo"), envio]) : null,
     ])
   );
 }

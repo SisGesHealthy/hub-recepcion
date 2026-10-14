@@ -680,6 +680,76 @@ export async function registrarLiberacion(orden, { brix, ph, acidez, obs, inicio
   await parcharOrdenLocal(orden.ID, { Estado_calidad: decision });
 }
 
+// Historial para Calidad: cada liberación con lo que Bodega recibió después
+// (trazabilidad). Se lee por ID desc y se filtra en el equipo: así no depende
+// de columnas indexadas aunque las listas pasen los 5.000 ítems.
+// Enlace liberación → recepción: mismo ID_N y llegada desde 1 día antes de
+// la liberación (el ID_N se repite cada año). Pallets: mismo ID_N y pesados
+// entre la llegada y el cierre de esa recepción (igual que detalleRecepcion).
+// Solo cuentan recepciones hasta 30 días después de la liberación.
+export async function historialLiberaciones(dias = 30) {
+  const desde = new Date(Date.now() - dias * 86400000);
+  desde.setHours(0, 0, 0, 0);
+  const t0 = desde.getTime();
+  const fechaLib = (l) => new Date(l.HoraCierre || l.Created).getTime();
+  const libs = (await api.items("liberaciones", { orderby: "ID desc", top: Math.max(600, dias * 15) })).filter((l) => fechaLib(l) >= t0);
+  if (!libs.length) return [];
+  const margen = new Date(t0 - 2 * 86400000);
+  const [recs, ordenes, pallets] = await Promise.all([
+    api.items("recepciones", {
+      where: [["HoraLlegada", "ge", margen]],
+      orderby: "HoraLlegada asc",
+      top: 3000,
+      select: ["ID", "ID_1", "Estado", "TotalNeto", "TotalBruto", "TotalTara", "HoraLlegada", "HoraCierre", "Bodeguero", "Conductor", "Placa", "ObservacionesProveedor"],
+    }),
+    api.items("ordenes", { orderby: "ID desc", top: Math.max(800, dias * 20), select: ["ID", "OData__x0049_D2", "Created", "FechaProgramada", "CantidadProgramada", "Unidad", "Estado"] }),
+    api.items("pallets", {
+      where: [["HoraRegistro", "ge", margen]],
+      orderby: "HoraRegistro asc",
+      top: 5000,
+      select: ["ID", "RecepcionID_Num_x002c_", "HoraRegistro", "PesoBruto", "PesoNeto", "Envases", "P_unitario"],
+    }),
+  ]);
+  const por = (rows, k) => rows.reduce((m, r) => ((m[r[k]] ??= []).push(r), m), {});
+  const recsDe = por(recs, "ID_1"), ordDe = por(ordenes, "OData__x0049_D2"), palDe = por(pallets, "RecepcionID_Num_x002c_");
+  libs.sort((a, b) => fechaLib(b) - fechaLib(a));
+  return libs.map((l) => {
+    const tl = fechaLib(l);
+    const ords = ordDe[l.ID_1] || [];
+    const orden = ords.find((o) => new Date(o.Created).getTime() <= tl + 3600000) || ords.find((o) => Math.abs(new Date(o.Created).getTime() - tl) < 30 * 86400000) || null;
+    const recepciones = (recsDe[l.ID_1] || []).filter((r) => {
+      const t = new Date(r.HoraLlegada).getTime();
+      return t >= tl - 86400000 && t <= tl + 30 * 86400000;
+    });
+    const pals = recepciones.flatMap((r) => {
+      const a = new Date(r.HoraLlegada).getTime() - 60000;
+      const b = r.HoraCierre ? new Date(r.HoraCierre).getTime() + 60000 : Infinity;
+      return (palDe[l.ID_1] || []).filter((p) => {
+        const t = new Date(p.HoraRegistro).getTime();
+        return t >= a && t <= b;
+      });
+    });
+    const fin = recepciones.filter((r) => r.Estado === "Finalizada");
+    const pesosEnv = [...new Set(pals.map((p) => +p.P_unitario || 0).filter(Boolean))];
+    return {
+      lib: l,
+      orden,
+      recepciones,
+      estadoRecepcion: !recepciones.length ? "Sin recibir" : fin.length === recepciones.length ? "Recibida" : "En proceso",
+      netoRecibido: fin.length ? fin.reduce((s, r) => s + (+r.TotalNeto || 0), 0) : null,
+      bruto: pals.reduce((s, p) => s + (+p.PesoBruto || 0), 0),
+      pallets: pals.length,
+      envases: pals.reduce((s, p) => s + (+p.Envases || 0), 0),
+      pesoEnvase: pesosEnv.map((x) => x.toLocaleString("es-EC", { maximumFractionDigits: 3 })).join(" / "),
+      llegada: recepciones[0]?.HoraLlegada || null,
+      cierre: fin.at(-1)?.HoraCierre || null,
+      bodeguero: [...new Set(recepciones.map((r) => r.Bodeguero).filter(Boolean))].join(", "),
+      conductor: [...new Set(recepciones.map((r) => r.Conductor).filter(Boolean))].join(", "),
+      placa: [...new Set(recepciones.map((r) => r.Placa).filter(Boolean))].join(", "),
+    };
+  });
+}
+
 // ---------------- calidad - planta ----------------
 
 export async function catalogo() {

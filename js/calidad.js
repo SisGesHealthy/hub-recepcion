@@ -10,14 +10,20 @@ import { toast, hoja, campoNum, vacio, confirmar } from "./ui.js";
 
 let timer = null;
 
-export function render(vista) {
+export function render(vista, resto = []) {
   clearInterval(timer);
+  if (resto[0] === "historial") return import("./historial-calidad.js").then((m) => m.render(vista));
+  if (resto[0] === "ver" && resto[1])
+    return import("./recepciones.js").then((m) => m.detalle(vista, Number(resto[1]), { volver: ["#/calidad/historial", "← Historial de liberaciones"], reenviar: false }));
   const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Cargando…"));
   const aviso = el("div", { class: "aviso hidden" });
   vista.append(
     el("div", { class: "cab" }, [
       el("div", {}, [el("h1", { class: "titulo" }, "Liberación de materia prima"), el("p", { class: "sub" }, "Órdenes programadas pendientes de análisis")]),
-      el("button", { class: "btn btn-sec", onclick: () => cargar() }, "↻ Actualizar"),
+      el("div", { class: "fila-botones" }, [
+        el("a", { class: "btn btn-sec", href: "#/calidad/historial" }, "📋 Historial de liberaciones"),
+        el("button", { class: "btn btn-sec", onclick: () => cargar() }, "↻ Actualizar"),
+      ]),
     ]),
     aviso,
     lista
