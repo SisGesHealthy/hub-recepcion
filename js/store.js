@@ -1235,31 +1235,52 @@ export async function parametrosPeso() {
   }
 }
 
-// Peso que se espera del producto:
-//  1) lo configurado por Sistemas (ParametrosPeso);
-//  2) si no, Odoo: en productos por unidad "weight" es la presentación (0,397 kg);
-//  3) en productos a granel (unidad kg, weight = 1 "por kilo") se toma del
-//     nombre: "PULPA DE MORA 14KG" → 14 kg.
-// Devuelve { nominal, min, max, unidad: "g"|"kg", origen, param }.
-export function especPeso(of, params) {
-  const param = params.find((p) => (p.Title || "").trim().toUpperCase() === (of.codigo || "").trim().toUpperCase()) || null;
-  if (param && param.PesoNominal) {
-    return { nominal: param.PesoNominal, min: param.PesoMinimo ?? null, max: param.PesoMaximo ?? null, unidad: param.Unidad || "g", origen: "configurado", param };
-  }
+// Presentación del producto según Odoo o su nombre (sin parámetros):
+// { nominal, unidad } o null.
+//  - productos por unidad: "weight" de Odoo es la presentación (0,397 kg → 397 g);
+//  - granel (weight = 1 "por kilo") y cajas de exportación: del nombre
+//    ("PULPA DE MORA 14KG" → 14 kg; "12 X 14 OZ" → 396,9 g por unidad).
+export function presentacionDe(of) {
   let gramos = null;
   const uom = of.uom_producto || "";
-  if (/^unit|^unidad/i.test(uom) && of.peso_kg > 0) gramos = of.peso_kg * 1000; // 0,397 kg → 397 g
+  if (/^unit|^unidad/i.test(uom) && of.peso_kg > 0) gramos = of.peso_kg * 1000;
   if (!gramos) {
-    // Del nombre: "12 X 14 OZ" → 14 oz por unidad; "14KG", "250 g"…
     const oz = (of.producto || "").match(/(\d+(?:[.,]\d+)?)\s*OZ\b/i);
     const m = (of.producto || "").match(/(\d+(?:[.,]\d+)?)\s*(KG|KL|KILOS?|G|GR|GRAMOS?)\b/i);
     if (oz) gramos = Math.round(parseFloat(oz[1].replace(",", ".")) * 28.3495 * 10) / 10;
     else if (m) gramos = parseFloat(m[1].replace(",", ".")) * (/^g/i.test(m[2]) ? 1 : 1000);
   }
   if (!gramos && of.peso_kg > 0 && of.peso_kg !== 1) gramos = of.peso_kg * 1000;
-  if (!gramos) return { nominal: null, min: null, max: null, unidad: "g", origen: "sin dato", param };
+  if (!gramos) return null;
   const unidad = gramos >= 2000 ? "kg" : "g";
-  return { nominal: unidad === "kg" ? gramos / 1000 : gramos, min: null, max: null, unidad, origen: "Odoo", param };
+  return { nominal: unidad === "kg" ? gramos / 1000 : gramos, unidad };
+}
+
+// Clave de la presentación en ParametrosPeso: "PRESENTACION 397 G". En gramos
+// se redondea al entero (14 oz = 396,9 g → la misma presentación que 397 g).
+export function clavePresentacion(pres) {
+  if (!pres) return null;
+  const n = pres.unidad === "g" ? Math.round(pres.nominal) : Math.round(pres.nominal * 100) / 100;
+  return `PRESENTACION ${n} ${pres.unidad}`.toUpperCase();
+}
+export const etiquetaPresentacion = (clave) => clave.replace(/^PRESENTACION /, "").replace(/ G$/, " g").replace(/ KG$/, " kg");
+
+// Peso que se espera del producto, en este orden:
+//  1) excepción configurada para ese producto (Title = código);
+//  2) parámetro de su PRESENTACIÓN (Title = "PRESENTACION 397 G"), que
+//     comparten todos los productos de igual peso;
+//  3) solo el nominal (Odoo o nombre), sin rango.
+// Devuelve { nominal, min, max, unidad, origen, param, clave }.
+export function especPeso(of, params) {
+  const buscar = (t) => params.find((p) => (p.Title || "").trim().toUpperCase() === t) || null;
+  const pres = presentacionDe(of);
+  const clave = clavePresentacion(pres);
+  const propio = buscar((of.codigo || "").trim().toUpperCase());
+  if (propio?.PesoNominal) return { nominal: propio.PesoNominal, min: propio.PesoMinimo ?? null, max: propio.PesoMaximo ?? null, unidad: propio.Unidad || "g", origen: "producto", param: propio, clave };
+  const dePres = clave ? buscar(clave) : null;
+  if (dePres?.PesoNominal) return { nominal: dePres.PesoNominal, min: dePres.PesoMinimo ?? null, max: dePres.PesoMaximo ?? null, unidad: dePres.Unidad || pres.unidad, origen: "presentación", param: dePres, clave };
+  if (!pres) return { nominal: null, min: null, max: null, unidad: "g", origen: "sin dato", param: null, clave };
+  return { ...pres, min: null, max: null, origen: "Odoo", param: null, clave };
 }
 
 export function estadoPeso(valor, esp) {
@@ -1446,3 +1467,8 @@ export async function aplicarRangoActual(c, nuevo) {
 
 // Último tipo de sellado usado con este producto (se precarga, opcional).
 export const selladoRecordado = (codigo) => kv.get(`pesos:sellado:${codigo}`, "");
+
+export async function eliminarParametroPeso(p) {
+  await encolar({ tipo: "removeWhere", lista: "parametrosPeso", where: [["ID", "eq", p.ID]] });
+  await subirAhora();
+}

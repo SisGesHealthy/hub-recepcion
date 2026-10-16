@@ -359,3 +359,10 @@ a.control-fila { color: inherit; text-decoration: none; }
 .tabla-accesos tr.fila-admin td:first-child { text-align: left; }
 .fila-botones.izq { justify-content: flex-start; }
 .fila-botones.izq > * { flex: none; }
+
+/* parámetros por presentación */
+.param-peso .pres { font-size: 18px; }
+.param-peso details summary { cursor: pointer; color: var(--dim); }
+.lista-prod { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.btn.rojo { color: var(--rojo); }
+.config select { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); max-width: 100%; }

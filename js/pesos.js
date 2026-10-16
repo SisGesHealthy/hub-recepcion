@@ -51,6 +51,15 @@ async function pantallaDia(vista, dia) {
       ? el("div", { class: "aviso" }, [
           `Hay un control en curso: ${enCurso.of.codigo} · parada ${enCurso.parada || "—"} · ${enCurso.muestras.length} muestras. `,
           el("a", { href: "#/pesos/visita", class: "btn btn-azul btn-mini" }, "Continuar"),
+          " ",
+          el("button", {
+            class: "btn btn-sec btn-mini",
+            onclick: async () => {
+              if (!(await confirmar("Descartar control en curso", `Se borran las ${enCurso.muestras.length} muestras de este control no guardado. Un control ya guardado no se borra.`, { si: "Descartar", peligro: true }))) return;
+              await st.descartarVisita();
+              location.reload();
+            },
+          }, "Descartar"),
         ])
       : el("div"),
     lista
@@ -493,69 +502,97 @@ function editarDatos(c) {
 
 // ---------------- parámetros (solo Sistemas) ----------------
 
+// Se configuran por PRESENTACIÓN (397 g, 250 g, 15 kg…): todos los productos
+// de igual peso comparten el rango. Una excepción por producto solo si hace falta.
 async function parametros(vista) {
-  const cont = el("div", { class: "reporte-wrap" }, el("div", { class: "cargando" }, "Cargando…"));
+  const cont = el("div", {}, el("div", { class: "cargando" }, "Cargando…"));
   vista.append(
     el("div", { class: "cab" }, [
       el("div", {}, [
         el("a", { href: "#/pesos", class: "volver" }, "← Control de pesos"),
         el("h1", { class: "titulo" }, "Parámetros de peso"),
-        el("p", { class: "sub" }, "Peso nominal, mínimo y máximo por producto (y cliente). Productos de las órdenes de Odoo recientes + los ya configurados."),
+        el("p", { class: "sub" }, "Un rango por presentación: aplica a todos los productos de ese peso. Las excepciones por producto son opcionales."),
       ]),
     ]),
     cont
   );
-  const [datos, params, clienteDe] = await Promise.all([st.cargarOF(), st.parametrosPeso(), clientePorCodigo()]);
-  const filas = new Map();
-  for (const p of params) filas.set(p.Title.toUpperCase(), { codigo: p.Title, producto: p.Producto, cliente: p.Cliente, param: p });
-  for (const o of datos.ofs || []) if (!/^REP-/i.test(o.codigo) && !filas.has(o.codigo.toUpperCase())) filas.set(o.codigo.toUpperCase(), { codigo: o.codigo, producto: o.producto, cliente: clienteDe(o.codigo), of: o });
+  const [datos, params, cat] = await Promise.all([st.cargarOF(), st.parametrosPeso(), st.catalogo()]);
 
-  clear(cont);
-  const tabla = el("table", { class: "doc-tabla param-peso" }, [
-    el("tr", {}, ["Código", "Producto", "Cliente", "Unidad", "Nominal", "Tolerancia ±", "Mínimo", "Máximo", ""].map((x) => el("th", {}, x))),
-  ]);
-  for (const f of [...filas.values()].sort((a, b) => a.codigo.localeCompare(b.codigo))) {
-    const p = f.param;
-    const base = p ? { nominal: p.PesoNominal, min: p.PesoMinimo, max: p.PesoMaximo, unidad: p.Unidad || "g" } : st.especPeso(f.of, []);
-    const inp = (v) => el("input", { type: "text", inputmode: "decimal", value: v === null || v === undefined ? "" : String(v).replace(".", ","), class: "in-num" });
-    const nominal = inp(base.nominal);
-    const min = inp(base.min);
-    const max = inp(base.max);
-    const tol = el("input", { type: "text", inputmode: "decimal", placeholder: "%", class: "in-num in-tol" });
-    const unidad = el("select", {}, ["g", "kg"].map((x) => el("option", { value: x }, x)));
-    unidad.value = base.unidad || "g";
-    const cliente = el("input", { type: "text", value: f.cliente || "", class: "in-txt" });
+  // Productos conocidos: catálogo de liberación + órdenes de Odoo recientes.
+  const productos = new Map();
+  for (const c of cat) if (c.Title) productos.set(c.Title.toUpperCase(), { codigo: c.Title, producto: c.field_1 || "", cliente: c.field_2 || "" });
+  for (const o of datos.ofs || []) if (o.codigo && !/^REP-/i.test(o.codigo)) productos.set(o.codigo.toUpperCase(), { ...(productos.get(o.codigo.toUpperCase()) || {}), codigo: o.codigo, producto: o.producto, of: o });
+
+  // Agrupar por presentación.
+  const grupos = new Map();
+  for (const p of productos.values()) {
+    const pres = st.presentacionDe(p.of || { producto: p.producto });
+    const clave = st.clavePresentacion(pres);
+    if (!clave) continue;
+    if (!grupos.has(clave)) grupos.set(clave, { clave, pres, productos: [] });
+    grupos.get(clave).productos.push(p);
+  }
+  const deClave = (t) => params.find((x) => (x.Title || "").toUpperCase() === t) || null;
+  for (const x of params) {
+    const t = (x.Title || "").toUpperCase();
+    if (t.startsWith("PRESENTACION ") && !grupos.has(t)) grupos.set(t, { clave: t, pres: { nominal: x.PesoNominal, unidad: x.Unidad || "g" }, productos: [] });
+  }
+
+  const inp = (v, cls = "in-num") => el("input", { type: "text", inputmode: "decimal", value: v === null || v === undefined ? "" : String(v).replace(".", ","), class: cls });
+  const r2 = (x) => String(Math.round(x * 100) / 100).replace(".", ",");
+  const conTolerancia = (nominal, tol, min, max) =>
     tol.addEventListener("input", () => {
       const t = aNumero(tol.value);
       const n = aNumero(nominal.value);
       if (t === null || n === null) return;
-      const d = (n * t) / 100;
-      const r = (x) => String(Math.round(x * 100) / 100).replace(".", ",");
-      min.value = r(n - d);
-      max.value = r(n + d);
+      min.value = r2(n - (n * t) / 100);
+      max.value = r2(n + (n * t) / 100);
     });
+  const validar = (etq, n, a, b) => {
+    if (!n) return toast(`${etq}: falta el peso nominal`, "err"), false;
+    if (a === null || b === null) return toast(`${etq}: falta mínimo o máximo`, "err"), false;
+    if (!(a <= n && n <= b)) return toast(`${etq}: debe cumplirse mínimo ≤ nominal ≤ máximo`, "err"), false;
+    return true;
+  };
+
+  // ---- tabla de presentaciones ----
+  const tPres = el("table", { class: "doc-tabla param-peso" }, [
+    el("tr", {}, ["Presentación", "Productos", "Nominal", "Tolerancia ±%", "Mínimo", "Máximo", ""].map((x) => el("th", {}, x))),
+  ]);
+  const ordenados = [...grupos.values()].sort((a, b) => (a.pres.unidad === b.pres.unidad ? a.pres.nominal - b.pres.nominal : a.pres.unidad === "g" ? -1 : 1));
+  for (const g of ordenados) {
+    const p = deClave(g.clave);
+    const u = p?.Unidad || g.pres.unidad;
+    const nominal = inp(p?.PesoNominal ?? g.pres.nominal);
+    const tol = inp("", "in-num in-tol");
+    tol.placeholder = "%";
+    const min = inp(p?.PesoMinimo);
+    const max = inp(p?.PesoMaximo);
+    conTolerancia(nominal, tol, min, max);
+    const excepciones = g.productos.filter((x) => deClave(x.codigo.toUpperCase()));
     const guardar = el("button", { class: `btn ${p ? "btn-sec" : "btn-verde"} btn-mini` }, p ? "Guardar" : "Configurar");
     guardar.addEventListener("click", async () => {
       const n = aNumero(nominal.value);
       const a = aNumero(min.value);
       const b = aNumero(max.value);
-      if (!n) return toast(`${f.codigo}: falta el peso nominal`, "err");
-      if (a === null || b === null) return toast(`${f.codigo}: falta mínimo o máximo`, "err");
-      if (!(a <= n && n <= b)) return toast(`${f.codigo}: debe cumplirse mínimo ≤ nominal ≤ máximo`, "err");
+      if (!validar(st.etiquetaPresentacion(g.clave), n, a, b)) return;
       guardar.disabled = true;
-      await st.guardarParametroPeso({ id: p?.ID, codigo: f.codigo, producto: f.producto, cliente: cliente.value.trim(), nominal: n, min: a, max: b, unidad: unidad.value });
+      await st.guardarParametroPeso({ id: p?.ID, codigo: g.clave, producto: `Presentación ${st.etiquetaPresentacion(g.clave)}`, cliente: "", nominal: n, min: a, max: b, unidad: u });
       guardar.disabled = false;
       guardar.textContent = "Guardado ✓";
       guardar.className = "btn btn-sec btn-mini";
-      toast(`${f.codigo} guardado`);
+      toast(`Presentación ${st.etiquetaPresentacion(g.clave)} guardada: aplica a ${g.productos.length - excepciones.length} productos`);
     });
-    tabla.appendChild(
+    tPres.appendChild(
       el("tr", { class: p ? "" : "sin-config" }, [
-        el("td", {}, f.codigo),
-        el("td", { class: "td-prod" }, f.producto || ""),
-        el("td", {}, cliente),
-        el("td", {}, unidad),
-        el("td", {}, nominal),
+        el("td", {}, el("b", { class: "pres" }, `${st.etiquetaPresentacion(g.clave)}`)),
+        el("td", { class: "td-prod" }, [
+          el("details", {}, [
+            el("summary", {}, `${g.productos.length} producto${g.productos.length === 1 ? "" : "s"}${excepciones.length ? ` · ${excepciones.length} con excepción` : ""}`),
+            el("ul", { class: "lista-prod" }, g.productos.map((x) => el("li", {}, `${x.codigo} · ${x.producto}${x.cliente ? ` (${x.cliente})` : ""}${deClave(x.codigo.toUpperCase()) ? " · excepción" : ""}`))),
+          ]),
+        ]),
+        el("td", {}, [nominal, el("small", {}, ` ${u}`)]),
         el("td", {}, tol),
         el("td", {}, min),
         el("td", {}, max),
@@ -563,8 +600,78 @@ async function parametros(vista) {
       ])
     );
   }
-  cont.appendChild(tabla);
-  cont.appendChild(el("p", { class: "nota pad" }, "Tolerancia ±: escribe un porcentaje y se calculan mínimo y máximo desde el nominal. Las filas en amarillo aún no están configuradas."));
+
+  // ---- excepciones por producto ----
+  const exc = params.filter((x) => x.Title && !x.Title.toUpperCase().startsWith("PRESENTACION "));
+  const tExc = el("table", { class: "doc-tabla param-peso" }, [el("tr", {}, ["Producto", "Nominal", "Mínimo", "Máximo", "Presentación", ""].map((x) => el("th", {}, x)))]);
+  for (const x of exc) {
+    const prod = productos.get(x.Title.toUpperCase());
+    const clave = st.clavePresentacion(st.presentacionDe(prod?.of || { producto: prod?.producto || x.Producto }));
+    const general = clave ? deClave(clave) : null;
+    const u = x.Unidad || "g";
+    const nominal = inp(x.PesoNominal);
+    const min = inp(x.PesoMinimo);
+    const max = inp(x.PesoMaximo);
+    const guardar = el("button", { class: "btn btn-sec btn-mini" }, "Guardar");
+    guardar.addEventListener("click", async () => {
+      const n = aNumero(nominal.value);
+      const a = aNumero(min.value);
+      const b = aNumero(max.value);
+      if (!validar(x.Title, n, a, b)) return;
+      guardar.disabled = true;
+      await st.guardarParametroPeso({ id: x.ID, codigo: x.Title, producto: x.Producto, cliente: x.Cliente, nominal: n, min: a, max: b, unidad: u });
+      guardar.disabled = false;
+      toast(`${x.Title} guardado`);
+    });
+    const quitar = el("button", { class: "btn btn-sec btn-mini rojo" }, "Quitar excepción");
+    quitar.addEventListener("click", async () => {
+      const txt = general
+        ? `${x.Title} pasará a usar el rango de su presentación (${st.etiquetaPresentacion(clave)}: ${num(general.PesoMinimo, "")}– ${num(general.PesoMaximo, general.Unidad || "g")}).`
+        : `${x.Title} quedará sin rango hasta que configures su presentación${clave ? ` (${st.etiquetaPresentacion(clave)})` : ""}.`;
+      if (!(await confirmar("Quitar excepción", txt + " Los controles ya hechos no cambian.", { si: "Quitar", peligro: true }))) return;
+      await st.eliminarParametroPeso(x);
+      toast("Excepción quitada");
+      location.reload();
+    });
+    tExc.appendChild(
+      el("tr", {}, [
+        el("td", { class: "td-prod" }, `${x.Title} · ${x.Producto || prod?.producto || ""}`),
+        el("td", {}, [nominal, el("small", {}, ` ${u}`)]),
+        el("td", {}, min),
+        el("td", {}, max),
+        el("td", {}, clave ? `${st.etiquetaPresentacion(clave)}${general ? ` (${num(general.PesoMinimo, "")}– ${num(general.PesoMaximo, "")})` : " (sin configurar)"}` : "—"),
+        el("td", {}, el("div", { class: "fila-botones izq" }, [guardar, quitar])),
+      ])
+    );
+  }
+
+  // Nueva excepción: elegir un producto.
+  const selProd = el("select", {}, [el("option", { value: "" }, "— Elegir producto —"), ...[...productos.values()].filter((x) => !deClave(x.codigo.toUpperCase())).sort((a, b) => a.codigo.localeCompare(b.codigo)).map((x) => el("option", { value: x.codigo }, `${x.codigo} · ${x.producto}`))]);
+  const nuevaExc = el("button", { class: "btn btn-sec", type: "button" }, "+ Agregar excepción");
+  nuevaExc.addEventListener("click", async () => {
+    const x = productos.get((selProd.value || "").toUpperCase());
+    if (!x) return toast("Elige un producto", "err");
+    const pres = st.presentacionDe(x.of || { producto: x.producto });
+    const general = deClave(st.clavePresentacion(pres) || "");
+    await st.guardarParametroPeso({ codigo: x.codigo, producto: x.producto, cliente: x.cliente, nominal: general?.PesoNominal ?? pres?.nominal ?? 0, min: general?.PesoMinimo ?? pres?.nominal ?? 0, max: general?.PesoMaximo ?? pres?.nominal ?? 0, unidad: general?.Unidad || pres?.unidad || "g" });
+    toast(`Excepción creada para ${x.codigo}: ajusta su rango`);
+    location.reload();
+  });
+
+  clear(cont);
+  cont.append(
+    el("section", { class: "card config" }, [
+      el("h2", {}, "Por presentación"),
+      el("p", { class: "nota" }, "Escribe la tolerancia ±% y se calculan mínimo y máximo desde el nominal (o escríbelos directo). En amarillo: presentaciones sin configurar. 14 oz se agrupa con 397 g."),
+      el("div", { class: "reporte-wrap" }, tPres),
+    ]),
+    el("section", { class: "card config" }, [
+      el("h2", {}, "Excepciones por producto (opcional)"),
+      el("p", { class: "nota" }, "Solo para un producto que deba tener un rango distinto al de su presentación. Una excepción tiene prioridad sobre la presentación."),
+      exc.length ? el("div", { class: "reporte-wrap" }, tExc) : el("p", { class: "nota" }, "No hay excepciones: todos los productos usan el rango de su presentación."),
+      el("div", { class: "fila-botones izq" }, [selProd, nuevaExc]),
+    ])
+  );
 }
 
 // Ícono de balanza (SVG propio, se adapta al color del texto).
