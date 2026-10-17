@@ -1271,16 +1271,33 @@ export const etiquetaPresentacion = (clave) => clave.replace(/^PRESENTACION /, "
 //     comparten todos los productos de igual peso;
 //  3) solo el nominal (Odoo o nombre), sin rango.
 // Devuelve { nominal, min, max, unidad, origen, param, clave }.
+// Presentación efectiva: la ASIGNADA a mano en ParametrosPeso (fila con el
+// código del producto, peso nominal y SIN mínimo/máximo; para productos cuyo
+// nombre no dice el peso y que Odoo tiene "por kilo", ej. SALS009 = 5 kg) o la
+// deducida de Odoo / del nombre.
+const esAsignacion = (p) => p?.PesoNominal && p.PesoMinimo == null && p.PesoMaximo == null;
+export function presentacionEfectiva(of, params) {
+  const propio = params.find((p) => (p.Title || "").trim().toUpperCase() === (of.codigo || "").trim().toUpperCase());
+  if (esAsignacion(propio)) return { nominal: propio.PesoNominal, unidad: propio.Unidad || "g", asignada: true };
+  return presentacionDe(of);
+}
+
+// Peso que se espera del producto, en este orden:
+//  1) excepción del producto (Title = código, CON mínimo/máximo);
+//  2) parámetro de su PRESENTACIÓN (Title = "PRESENTACION 397 G"), que
+//     comparten todos los productos de igual peso;
+//  3) solo el nominal (Odoo, nombre o asignado), sin rango.
+// Devuelve { nominal, min, max, unidad, origen, param, clave }.
 export function especPeso(of, params) {
   const buscar = (t) => params.find((p) => (p.Title || "").trim().toUpperCase() === t) || null;
-  const pres = presentacionDe(of);
-  const clave = clavePresentacion(pres);
   const propio = buscar((of.codigo || "").trim().toUpperCase());
-  if (propio?.PesoNominal) return { nominal: propio.PesoNominal, min: propio.PesoMinimo ?? null, max: propio.PesoMaximo ?? null, unidad: propio.Unidad || "g", origen: "producto", param: propio, clave };
+  const pres = presentacionEfectiva(of, params);
+  const clave = clavePresentacion(pres);
+  if (propio?.PesoNominal && !esAsignacion(propio)) return { nominal: propio.PesoNominal, min: propio.PesoMinimo ?? null, max: propio.PesoMaximo ?? null, unidad: propio.Unidad || "g", origen: "producto", param: propio, clave };
   const dePres = clave ? buscar(clave) : null;
   if (dePres?.PesoNominal) return { nominal: dePres.PesoNominal, min: dePres.PesoMinimo ?? null, max: dePres.PesoMaximo ?? null, unidad: dePres.Unidad || pres.unidad, origen: "presentación", param: dePres, clave };
   if (!pres) return { nominal: null, min: null, max: null, unidad: "g", origen: "sin dato", param: null, clave };
-  return { ...pres, min: null, max: null, origen: "Odoo", param: null, clave };
+  return { nominal: pres.nominal, unidad: pres.unidad, min: null, max: null, origen: pres.asignada ? "asignada" : "Odoo", param: null, clave };
 }
 
 export function estadoPeso(valor, esp) {

@@ -186,6 +186,7 @@ export function ofsDemo() {
       { of: "SEM/MO/01790", id: 1, fecha: dia(0), codigo: "PTEC015", producto: "PULPA DE MARACUYA 150 g", cantidad: 12000, unidad: "Units", estado: "En proceso", lote_odoo: "" },
       { of: "SEM/MO/01791", id: 2, fecha: dia(0), codigo: "PTEC002", producto: "PULPA DE GUANABANA GOYA USA UNIDAD 397 g", cantidad: 8800, unidad: "Units", estado: "Confirmada", lote_odoo: "" },
       { of: "SEM/MO/01792", id: 3, fecha: dia(0), codigo: "SALS007", producto: "SALSA DE CHOCOLATE 1 KG", cantidad: 2000, unidad: "kg", estado: "En proceso", lote_odoo: "L2802604" },
+      { of: "SEM/MO/01796", id: 5, fecha: dia(0), codigo: "SALS009", producto: "SALSA DE ARANDANO", cantidad: 300, unidad: "kg", estado: "Confirmada", lote_odoo: "", peso_kg: 1, uom_producto: "kg" },
       { of: "SEM/MO/01793", id: 4, fecha: dia(1), codigo: "PTEC014", producto: "PULPA DE MORA 150 g", cantidad: 5000, unidad: "Units", estado: "Confirmada", lote_odoo: "" },
     ],
   };

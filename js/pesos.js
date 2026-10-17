@@ -79,7 +79,7 @@ async function pantallaDia(vista, dia) {
       ? esp.min !== null || esp.max !== null
         ? `Nominal ${num(esp.nominal, esp.unidad)} · rango ${num(esp.min, "")}– ${num(esp.max, esp.unidad)}`
         : `Nominal ${num(esp.nominal, esp.unidad)} (de Odoo) · sin rango configurado`
-      : "Sin peso de presentación: configurar en Parámetros de peso";
+      : "Presentación desconocida: se escribe al iniciar el control";
     lista.appendChild(
       el("article", { class: `orden of-card ${suyos.length ? "con-lote" : "sin-lote"}` }, [
         el("div", { class: "of-cab" }, [
@@ -88,7 +88,7 @@ async function pantallaDia(vista, dia) {
             el("span", { class: "orden-fecha" }, `${o.of} · ${clienteDe(o.codigo) || "—"} · ${o.estado}`),
             el("span", { class: esp.min === null && esp.max === null ? "sin-rango" : "orden-fecha" }, rango),
           ]),
-          el("div", { class: "orden-accion" }, el("button", { class: "btn btn-verde", disabled: !esp.nominal || !!enCurso ? "" : null, onclick: () => iniciar(o, esp, clienteDe(o.codigo), dia) }, "Nuevo control")),
+          el("div", { class: "orden-accion" }, el("button", { class: "btn btn-verde", disabled: enCurso ? "" : null, onclick: () => iniciar(o, esp, clienteDe(o.codigo), dia) }, "Nuevo control")),
         ]),
         suyos.length
           ? el(
@@ -128,6 +128,11 @@ async function iniciar(of, esp, cliente, dia) {
   if (CONFIG.responsablesPlanta.includes(ult)) analista.value = ult;
   const sellado = el("select", {}, [el("option", { value: "" }, "No aplica"), ...["Termosellado", "Cuello de ganso"].map((t) => el("option", { value: t }, t))]);
   sellado.value = await st.selladoRecordado(of.codigo);
+  // Presentación desconocida (nombre sin peso y Odoo "por kilo"): la escribe
+  // la analista para este control.
+  const sinPres = !esp.nominal;
+  const presVal = el("input", { type: "text", inputmode: "decimal", placeholder: "Ej. 5", class: "in-num" });
+  const presU = el("select", {}, ["kg", "g"].map((x) => el("option", { value: x }, x)));
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Iniciar control");
   const campo = (l, x) => el("label", { class: "campo" }, [el("span", { class: "campo-label" }, l), x]);
   const h = hoja("Nuevo control de pesos", [
@@ -135,12 +140,23 @@ async function iniciar(of, esp, cliente, dia) {
     el("div", { class: "campos-2" }, [campo("Parada", parada), campo("Lote", lote)]),
     campo("Equipo dosificando", equipo),
     el("div", { class: "campos-2" }, [campo("Analista", analista), campo("Sellado (opcional)", sellado)]),
+    sinPres
+      ? el("div", { class: "aviso" }, [
+          "Este producto no tiene presentación conocida. Escribe el peso de la presentación que se está dosificando: ",
+          el("div", { class: "fila-botones izq" }, [presVal, presU]),
+        ])
+      : null,
     el("p", { class: "nota" }, `Peso de referencia: ${num(esp.nominal, esp.unidad)}${esp.min !== null || esp.max !== null ? ` · rango ${num(esp.min, "")}– ${num(esp.max, esp.unidad)}` : " · sin rango configurado (avisar a Sistemas)"}`),
     btn,
   ]);
   setTimeout(() => parada.focus(), 250);
   btn.addEventListener("click", async () => {
     if (!parada.value.trim()) return toast("Indica la parada", "err");
+    if (sinPres) {
+      const n = aNumero(presVal.value);
+      if (!n || n <= 0) return toast("Escribe el peso de la presentación (ej. 5 kg)", "err");
+      esp = { nominal: n, min: null, max: null, unidad: presU.value, origen: "analista", param: null, clave: null };
+    }
     if (!equipo.value.trim()) return toast("Indica quién está dosificando", "err");
     await st.guardarVisitaLocal({
       id: crypto.randomUUID(),
@@ -526,13 +542,18 @@ async function parametros(vista) {
   // Agrupar por presentación.
   const grupos = new Map();
   for (const p of productos.values()) {
-    const pres = st.presentacionDe(p.of || { producto: p.producto });
+    const pres = st.presentacionEfectiva(p.of || { codigo: p.codigo, producto: p.producto }, params);
     const clave = st.clavePresentacion(pres);
     if (!clave) continue;
     if (!grupos.has(clave)) grupos.set(clave, { clave, pres, productos: [] });
     grupos.get(clave).productos.push(p);
   }
   const deClave = (t) => params.find((x) => (x.Title || "").toUpperCase() === t) || null;
+  const esAsig = (x) => x.PesoNominal && x.PesoMinimo == null && x.PesoMaximo == null;
+  const esExcepcion = (codigo) => {
+    const x = deClave(codigo.toUpperCase());
+    return x && !esAsig(x);
+  };
   for (const x of params) {
     const t = (x.Title || "").toUpperCase();
     if (t.startsWith("PRESENTACION ") && !grupos.has(t)) grupos.set(t, { clave: t, pres: { nominal: x.PesoNominal, unidad: x.Unidad || "g" }, productos: [] });
@@ -569,7 +590,7 @@ async function parametros(vista) {
     const min = inp(p?.PesoMinimo);
     const max = inp(p?.PesoMaximo);
     conTolerancia(nominal, tol, min, max);
-    const excepciones = g.productos.filter((x) => deClave(x.codigo.toUpperCase()));
+    const excepciones = g.productos.filter((x) => esExcepcion(x.codigo));
     const guardar = el("button", { class: `btn ${p ? "btn-sec" : "btn-verde"} btn-mini` }, p ? "Guardar" : "Configurar");
     guardar.addEventListener("click", async () => {
       const n = aNumero(nominal.value);
@@ -589,7 +610,7 @@ async function parametros(vista) {
         el("td", { class: "td-prod" }, [
           el("details", {}, [
             el("summary", {}, `${g.productos.length} producto${g.productos.length === 1 ? "" : "s"}${excepciones.length ? ` · ${excepciones.length} con excepción` : ""}`),
-            el("ul", { class: "lista-prod" }, g.productos.map((x) => el("li", {}, `${x.codigo} · ${x.producto}${x.cliente ? ` (${x.cliente})` : ""}${deClave(x.codigo.toUpperCase()) ? " · excepción" : ""}`))),
+            el("ul", { class: "lista-prod" }, g.productos.map((x) => el("li", {}, `${x.codigo} · ${x.producto}${x.cliente ? ` (${x.cliente})` : ""}${esExcepcion(x.codigo) ? " · excepción" : deClave(x.codigo.toUpperCase()) ? " · presentación asignada" : ""}`))),
           ]),
         ]),
         el("td", {}, [nominal, el("small", {}, ` ${u}`)]),
@@ -602,11 +623,11 @@ async function parametros(vista) {
   }
 
   // ---- excepciones por producto ----
-  const exc = params.filter((x) => x.Title && !x.Title.toUpperCase().startsWith("PRESENTACION "));
+  const exc = params.filter((x) => x.Title && !x.Title.toUpperCase().startsWith("PRESENTACION ") && !esAsig(x));
   const tExc = el("table", { class: "doc-tabla param-peso" }, [el("tr", {}, ["Producto", "Nominal", "Mínimo", "Máximo", "Presentación", ""].map((x) => el("th", {}, x)))]);
   for (const x of exc) {
     const prod = productos.get(x.Title.toUpperCase());
-    const clave = st.clavePresentacion(st.presentacionDe(prod?.of || { producto: prod?.producto || x.Producto }));
+    const clave = st.clavePresentacion(st.presentacionDe(prod?.of || { codigo: x.Title, producto: prod?.producto || x.Producto }));
     const general = clave ? deClave(clave) : null;
     const u = x.Unidad || "g";
     const nominal = inp(x.PesoNominal);
@@ -651,12 +672,40 @@ async function parametros(vista) {
   nuevaExc.addEventListener("click", async () => {
     const x = productos.get((selProd.value || "").toUpperCase());
     if (!x) return toast("Elige un producto", "err");
-    const pres = st.presentacionDe(x.of || { producto: x.producto });
+    const pres = st.presentacionEfectiva(x.of || { codigo: x.codigo, producto: x.producto }, params);
     const general = deClave(st.clavePresentacion(pres) || "");
     await st.guardarParametroPeso({ codigo: x.codigo, producto: x.producto, cliente: x.cliente, nominal: general?.PesoNominal ?? pres?.nominal ?? 0, min: general?.PesoMinimo ?? pres?.nominal ?? 0, max: general?.PesoMaximo ?? pres?.nominal ?? 0, unidad: general?.Unidad || pres?.unidad || "g" });
     toast(`Excepción creada para ${x.codigo}: ajusta su rango`);
     location.reload();
   });
+
+  // ---- presentación asignada a mano ----
+  const asignadas = params.filter((x) => x.Title && !x.Title.toUpperCase().startsWith("PRESENTACION ") && esAsig(x));
+  const sinPresentacion = [...productos.values()].filter((x) => !st.presentacionEfectiva(x.of || { codigo: x.codigo, producto: x.producto }, params));
+  const tAsig = el("table", { class: "doc-tabla param-peso" }, [el("tr", {}, ["Producto", "Presentación", ""].map((x) => el("th", {}, x)))]);
+  for (const x of asignadas) {
+    const quitar = el("button", { class: "btn btn-sec btn-mini rojo" }, "Quitar");
+    quitar.addEventListener("click", async () => {
+      if (!(await confirmar("Quitar presentación asignada", `${x.Title} volverá a no tener presentación conocida (la analista la escribirá al iniciar cada control).`, { si: "Quitar", peligro: true }))) return;
+      await st.eliminarParametroPeso(x);
+      location.reload();
+    });
+    tAsig.appendChild(el("tr", {}, [el("td", { class: "td-prod" }, `${x.Title} · ${x.Producto || ""}`), el("td", {}, num(x.PesoNominal, x.Unidad || "g")), el("td", {}, quitar)]));
+  }
+  for (const x of sinPresentacion) {
+    const val = el("input", { type: "text", inputmode: "decimal", placeholder: "Ej. 5", class: "in-num" });
+    const uni = el("select", {}, ["kg", "g"].map((u) => el("option", { value: u }, u)));
+    const asignar = el("button", { class: "btn btn-verde btn-mini" }, "Asignar");
+    asignar.addEventListener("click", async () => {
+      const n = aNumero(val.value);
+      if (!n || n <= 0) return toast(`${x.codigo}: escribe el peso de la presentación`, "err");
+      asignar.disabled = true;
+      await st.guardarParametroPeso({ codigo: x.codigo, producto: x.producto, cliente: x.cliente, nominal: n, min: null, max: null, unidad: uni.value, notas: "Presentación asignada" });
+      toast(`${x.codigo}: presentación ${String(n).replace(".", ",")} ${uni.value}`);
+      location.reload();
+    });
+    tAsig.appendChild(el("tr", { class: "sin-config" }, [el("td", { class: "td-prod" }, `${x.codigo} · ${x.producto}`), el("td", {}, el("div", { class: "fila-botones izq" }, [val, uni])), el("td", {}, asignar)]));
+  }
 
   clear(cont);
   cont.append(
@@ -665,6 +714,13 @@ async function parametros(vista) {
       el("p", { class: "nota" }, "Escribe la tolerancia ±% y se calculan mínimo y máximo desde el nominal (o escríbelos directo). En amarillo: presentaciones sin configurar. 14 oz se agrupa con 397 g."),
       el("div", { class: "reporte-wrap" }, tPres),
     ]),
+    asignadas.length || sinPresentacion.length
+      ? el("section", { class: "card config" }, [
+          el("h2", {}, "Presentación de productos sin peso en el nombre"),
+          el("p", { class: "nota" }, "Productos cuyo nombre no dice el peso y que Odoo tiene «por kilo». Al asignarles la presentación pasan a su grupo y toman su rango. Si no se asigna, la analista escribe el peso al iniciar cada control."),
+          el("div", { class: "reporte-wrap" }, tAsig),
+        ])
+      : null,
     el("section", { class: "card config" }, [
       el("h2", {}, "Excepciones por producto (opcional)"),
       el("p", { class: "nota" }, "Solo para un producto que deba tener un rango distinto al de su presentación. Una excepción tiene prioridad sobre la presentación."),
