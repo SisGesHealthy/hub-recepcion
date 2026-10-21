@@ -19,16 +19,16 @@ const claseTipo = (c) => (/refriger/i.test(c.tipo || "") ? "refri" : /congel/i.t
 
 export function render(vista, resto) {
   if (resto[0] === "historial") return historial(vista, resto[1]);
-  const def = st.turnoActual();
-  const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : def.dia;
-  const turno = CONFIG.turnosTemperatura.includes(decodeURIComponent(resto[1] || "")) ? decodeURIComponent(resto[1]) : def.turno;
+  // Regla: solo se registra el turno que detecta el sistema por la hora, del
+  // día en curso. No se elige otro turno ni se registran días anteriores
+  // (aunque se escriba otra fecha en la dirección).
+  const { dia, turno } = st.turnoActual();
   return pantallaTurno(vista, dia, turno);
 }
 
 // ---------------- registro del turno ----------------
 
 async function pantallaTurno(vista, dia, turno) {
-  const ir = (d, t) => (location.hash = `#/temp/${d}/${encodeURIComponent(t)}`);
   const bodeguero = el("select", { class: "dias" }, [el("option", { value: "" }, "Bodeguero…"), ...CONFIG.bodegueros.map((b) => el("option", { value: b }, b))]);
   bodeguero.value = (await kv.get("ultimoBodeguero", "")) || "";
   const progreso = el("div", { class: "temp-progreso" });
@@ -38,16 +38,23 @@ async function pantallaTurno(vista, dia, turno) {
     el("div", { class: "cab" }, [
       el("div", { class: "cab-titulo-ico" }, [iconoTermometro("ico-titulo"), el("div", {}, [el("h1", { class: "titulo" }, "Temperaturas"), el("p", { class: "sub" }, `Contenedores · ${st.fmtDia(dia)}`)])]),
       el("div", { class: "cab-botones" }, [
-        el("button", { class: "btn btn-sec", onclick: () => ir(st.sumarDias(dia, -1), turno) }, "‹"),
-        el("input", { type: "date", class: "dias", value: dia, onchange: (e) => e.target.value && ir(e.target.value, turno) }),
-        el("button", { class: "btn btn-sec", onclick: () => ir(st.sumarDias(dia, 1), turno) }, "›"),
         el("a", { class: "btn btn-sec", href: `#/temp/historial/${dia}` }, "📈 Historial"),
       ]),
     ]),
-    el("div", { class: "turnos" }, CONFIG.turnosTemperatura.map((t) => el("button", { class: `turno ${t === turno ? "activo" : ""}`, onclick: () => ir(dia, t) }, [el("b", {}, t), el("small", { "data-turno": t }, "")]))),
+    el("div", { class: "turnos" }, CONFIG.turnosTemperatura.map((t) => el("div", { class: `turno ${t === turno ? "activo" : "bloqueado"}`, title: t === turno ? "Turno actual" : "Solo se registra el turno actual" }, [el("b", {}, t), el("small", { "data-turno": t }, ""), t === turno ? el("span", { class: "turno-tag" }, "Turno actual") : null]))),
     el("div", { class: "temp-barra" }, [progreso, bodeguero]),
     lista
   );
+
+  const vigilar = setInterval(() => {
+    if (!document.body.contains(lista)) return clearInterval(vigilar);
+    const ahora = st.turnoActual();
+    if (ahora.dia !== dia || ahora.turno !== turno) {
+      clearInterval(vigilar);
+      toast(`Cambió el turno: ${ahora.turno}`);
+      location.reload();
+    }
+  }, 60000);
 
   let lecturas = await st.temperaturasDelDia(dia);
   const deTurno = (t) => new Map(lecturas.filter((r) => r.Turno === t).map((r) => [r.ContenedorId, r]));
@@ -113,7 +120,7 @@ async function pantallaTurno(vista, dia, turno) {
       }
       const btnSigno = el("button", { class: "btn temp-signo", type: "button" });
       const aviso = el("div", { class: "temp-aviso" });
-      const obs = el("textarea", { rows: "2", placeholder: "Observación (obligatoria si está fuera de rango: ¿qué se hizo?)" }, r?.Observaciones || "");
+      const obs = el("textarea", { rows: "2", placeholder: "Observación (opcional)" }, r?.Observaciones || "");
       const valor = () => {
         const n = aNumero(input.value.replace(/^[-−]/, ""));
         return n === null ? null : signo * Math.abs(n);
@@ -124,7 +131,6 @@ async function pantallaTurno(vista, dia, turno) {
         const e = st.estadoTemp(v, c);
         input.className = `temp-input ${e === "OK" ? "ok" : e ? "fuera" : ""}`;
         aviso.textContent = e === "Alto" ? `⚠ Sobre el máximo (${c.max} °C)` : e === "Bajo" ? `⚠ Bajo el mínimo (${c.min} °C)` : "";
-        obs.classList.toggle("requerida", !!e && e !== "OK");
       };
       btnSigno.addEventListener("click", () => ((signo = -signo), evaluar()));
       input.addEventListener("input", () => {
@@ -136,11 +142,13 @@ async function pantallaTurno(vista, dia, turno) {
       });
       let foto = null;
       const fileIn = el("input", { type: "file", accept: "image/*", capture: "environment", class: "hidden" });
-      const btnFoto = el("button", { class: "btn btn-sec btn-mini", type: "button", onclick: () => fileIn.click() }, "📷 Foto del panel");
+      const btnFoto = el("button", { class: "btn temp-foto", type: "button", onclick: () => fileIn.click() }, "📷 Tomar foto del panel (obligatoria)");
       fileIn.addEventListener("change", async () => {
         if (!fileIn.files[0]) return;
         foto = await comprimirFoto(fileIn.files[0]);
-        btnFoto.textContent = "📷 Foto lista ✓";
+        btnFoto.textContent = "📷 Foto lista ✓ (tocar para cambiar)";
+        btnFoto.classList.remove("falta");
+        btnFoto.classList.add("lista");
       });
       const btn = el("button", { class: "btn btn-verde temp-guardar", type: "button" }, r ? "Guardar corrección" : "Registrar");
       btn.addEventListener("click", async () => {
@@ -148,7 +156,8 @@ async function pantallaTurno(vista, dia, turno) {
         if (v === null) return toast(`${c.nombre}: escribe la temperatura`, "err"), input.focus();
         if (Math.abs(v) > 60) return toast(`${c.nombre}: ${fmtT(v)} no parece una lectura válida`, "err");
         const e = st.estadoTemp(v, c);
-        if (e !== "OK" && !obs.value.trim()) return toast(`${c.nombre} fuera de rango: anota la acción tomada`, "err"), obs.focus();
+        // Foto del panel obligatoria siempre (también al corregir).
+        if (!foto) return toast(`${c.nombre}: falta la foto del panel`, "err"), btnFoto.classList.add("falta");
         if (!bodeguero.value) return toast("Elige el bodeguero arriba", "err"), bodeguero.focus();
         btn.disabled = true;
         const nuevo = await st.registrarTemperatura({ dia, turno, contenedor: c, temperatura: v, observaciones: obs.value.trim(), bodeguero: bodeguero.value, existente: !!r }, foto);
@@ -164,7 +173,9 @@ async function pantallaTurno(vista, dia, turno) {
       poner(card, 
         el("div", { class: "temp-captura" }, [btnSigno, el("div", { class: "temp-campo" }, [input, el("span", {}, "°C")]), btn]),
         aviso,
-        el("details", { class: "temp-mas", ...(r?.Observaciones ? { open: "" } : {}) }, [el("summary", {}, "Observación / foto"), obs, el("div", { class: "fila-botones izq" }, [btnFoto]), fileIn]),
+        btnFoto,
+        fileIn,
+        el("details", { class: "temp-mas", ...(r?.Observaciones ? { open: "" } : {}) }, [el("summary", {}, "Observación (opcional)"), obs]),
         r ? el("button", { class: "btn btn-sec btn-mini", type: "button", onclick: () => (delete card.dataset.editando, pintar()) }, "Cancelar corrección") : null
       );
       evaluar();
