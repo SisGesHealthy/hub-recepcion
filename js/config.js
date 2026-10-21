@@ -39,6 +39,7 @@ export const CONFIG = {
       catalogo: "Lists/CatalogoParametrosLiberacion", // rangos por producto
       parametrosPeso: "Lists/ParametrosPeso", // Control de pesos: nominal/mín/máx por producto
       controlPesos: "Lists/ControlPesos", // Control de pesos: una fila por visita
+      temperaturas: "Lists/TemperaturasContenedores", // Temperaturas: una fila por contenedor y turno
     },
   },
 
@@ -51,12 +52,20 @@ export const CONFIG = {
   // Valor inicial; la lista vigente se edita en la app (Configuración →
   // Cuentas con acceso) y se guarda en configuracion.json.
   accesos: {
-    "bodega2@healthyfood.com.ec": ["bodega"],
+    "bodega2@healthyfood.com.ec": ["bodega", "temp"],
     "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos"],
     "calidad2@healthyfood.com.ec": ["calidad", "planta", "pesos"],
     // "config" = administrador: configuración y parámetros de peso
     "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta", "pesos", "config"],
   },
+
+  // Temperaturas de contenedores: turnos del día y contenedores (valor por
+  // defecto; la lista vigente se edita en Configuración → Contenedores).
+  turnosTemperatura: ["06:00", "14:30", "22:00"],
+  contenedores: [
+    ...Array.from({ length: 9 }, (_, i) => ({ id: `C${i + 1}`, nombre: `Contenedor ${i + 1}`, tipo: "Congelación", min: -30, max: -15, activo: true })),
+    { id: "C10", nombre: "Contenedor 10", tipo: "Refrigeración", min: 0, max: 5, activo: true },
+  ],
 
   // Bodegueros activos (iniciales que se guardan en Recepciones.Bodeguero).
   bodegueros: ["AC", "BC", "JT", "JC"],

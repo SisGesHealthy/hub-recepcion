@@ -32,7 +32,7 @@ export function getApi() {
 
 // ---------------- usuario y accesos ----------------
 
-export const MODULOS = ["bodega", "calidad", "planta", "pesos", "config"];
+export const MODULOS = ["bodega", "calidad", "planta", "pesos", "temp", "config"];
 const accesosDe = (c) => (c === CONFIG.administrador ? [...MODULOS] : CONFIG.accesos[c] || []);
 
 export function setUsuario(nombre, correo) {
@@ -1043,11 +1043,19 @@ export async function cerrarLote(lote) {
 function aplicarConfig(cfg) {
   if (cfg?.accesos && Object.keys(cfg.accesos).length) {
     // La lista guardada reemplaza a la de config.js (así se pueden quitar cuentas).
-    CONFIG.accesos = Object.fromEntries(Object.entries(cfg.accesos).map(([k, v]) => [k.trim().toLowerCase(), v.filter((m) => MODULOS.includes(m))]));
+    CONFIG.accesos = Object.fromEntries(
+      Object.entries(cfg.accesos).map(([k, v]) => {
+        let mods = v.filter((m) => MODULOS.includes(m));
+        if (!(cfg.accesosVersion >= 2) && mods.includes("bodega") && !mods.includes("temp")) mods = [...mods, "temp"];
+        return [k.trim().toLowerCase(), mods];
+      })
+    );
     if (usuario) usuario.accesos = accesosDe(usuario.correo);
   }
   if (cfg?.responsablesPlanta?.length) CONFIG.responsablesPlanta = cfg.responsablesPlanta;
   if (cfg?.bodegueros?.length) CONFIG.bodegueros = cfg.bodegueros;
+  if (cfg?.contenedores?.length) CONFIG.contenedores = cfg.contenedores;
+  if (cfg?.turnosTemperatura?.length) CONFIG.turnosTemperatura = cfg.turnosTemperatura;
   if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
 }
 
@@ -1079,7 +1087,7 @@ export async function cargarConfig({ esperar = false } = {}) {
 
 export async function guardarConfig(cfg) {
   const { carpeta, nombre } = CONFIG.archivoConfig;
-  const datos = { ...cfg, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
+  const datos = { ...cfg, accesosVersion: 2, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
   await api.escribirArchivo(carpeta, nombre, JSON.stringify(datos, null, 2));
   await kv.set("cache:config", datos);
   await cargarConfig();
@@ -1488,4 +1496,88 @@ export const selladoRecordado = (codigo) => kv.get(`pesos:sellado:${codigo}`, ""
 export async function eliminarParametroPeso(p) {
   await encolar({ tipo: "removeWhere", lista: "parametrosPeso", where: [["ID", "eq", p.ID]] });
   await subirAhora();
+}
+
+// ---------------- Temperaturas de contenedores ----------------
+// Una fila por contenedor y turno: Title = "AAAA-MM-DD|06:00|C3" (único), así
+// un reintento o una corrección del mismo turno nunca duplica.
+
+export const claveTemp = (dia, turno, id) => `${dia}|${turno}|${id}`;
+
+export function estadoTemp(t, c) {
+  if (t === null || t === undefined || isNaN(t)) return null;
+  if (c.min != null && t < c.min) return "Bajo";
+  if (c.max != null && t > c.max) return "Alto";
+  return "OK";
+}
+
+// Turno que corresponde a la hora actual: el más cercano (entre 22:00 y las
+// 02:00 del día siguiente sigue contando como el de las 22:00 del día anterior).
+export function turnoActual(ahora = new Date()) {
+  const hhmm = (s) => s.split(":").reduce((h, m) => Number(h) * 60 + Number(m));
+  const local = new Date(ahora.toLocaleString("en-US", { timeZone: TZ }));
+  let min = local.getHours() * 60 + local.getMinutes();
+  let dia = hoyISO();
+  const turnos = CONFIG.turnosTemperatura;
+  if (min < 3 * 60) {
+    // madrugada: último turno del día anterior
+    return { dia: sumarDias(dia, -1), turno: turnos[turnos.length - 1] };
+  }
+  let mejor = turnos[0];
+  for (const t of turnos) if (Math.abs(hhmm(t) - min) < Math.abs(hhmm(mejor) - min)) mejor = t;
+  return { dia, turno: mejor };
+}
+
+export async function temperaturasDelDia(dia) {
+  const pend = (await idb.getAll("outbox"))
+    .filter((o) => o.lista === "temperaturas" && (o.campos?.Title || o.where?.[0]?.[2] || "").startsWith(dia + "|"))
+    .map((o) => ({ ...(o.campos || {}), Title: o.campos?.Title || o.where[0][2], pendiente: true }));
+  let rows = [];
+  try {
+    rows = await api.items("temperaturas", {
+      where: [["Fecha", "ge", new Date(diaASP(dia))], ["Fecha", "lt", new Date(diaASP(sumarDias(dia, 1)))]],
+      top: 1000,
+    });
+    await kv.set(`cache:temp:${dia}`, rows);
+  } catch {
+    rows = await kv.get(`cache:temp:${dia}`, []);
+  }
+  // lo pendiente (aún sin subir) manda sobre lo leído
+  const mapa = new Map(rows.map((r) => [r.Title, r]));
+  for (const p of pend) mapa.set(p.Title, { ...(mapa.get(p.Title) || {}), ...p });
+  return [...mapa.values()];
+}
+
+export async function registrarTemperatura({ dia, turno, contenedor, temperatura, observaciones, bodeguero, existente }, fotoBlob) {
+  const titulo = claveTemp(dia, turno, contenedor.id);
+  const estado = estadoTemp(temperatura, contenedor);
+  const campos = {
+    Title: titulo,
+    Fecha: diaASP(dia),
+    Turno: turno,
+    ContenedorId: contenedor.id,
+    Contenedor: contenedor.nombre,
+    Tipo: contenedor.tipo,
+    Temperatura: temperatura,
+    Minimo: contenedor.min ?? null,
+    Maximo: contenedor.max ?? null,
+    Estado: estado,
+    Observaciones: observaciones || null,
+    Bodeguero: bodeguero || "",
+    Operario: usuario?.nombre || "",
+    HoraRegistro: new Date().toISOString(),
+  };
+  const foto = fotoBlob ? { campo: "Foto", ext: "jpg" } : null;
+  if (existente) await encolar({ tipo: "updateWhere", lista: "temperaturas", where: [["Title", "eq", titulo]], campos, foto }, fotoBlob);
+  else await encolar({ tipo: "add", lista: "temperaturas", clave: [["Title", "eq", titulo]], campos, foto }, fotoBlob);
+  await kv.set("ultimoBodeguero", bodeguero || "");
+  return { ...campos, pendiente: true };
+}
+
+// Lecturas de los últimos N días (para el historial / tendencia).
+export async function temperaturasRango(desde, hasta) {
+  return api.items("temperaturas", {
+    where: [["Fecha", "ge", new Date(diaASP(desde))], ["Fecha", "lt", new Date(diaASP(sumarDias(hasta, 1)))]],
+    top: 5000,
+  });
 }

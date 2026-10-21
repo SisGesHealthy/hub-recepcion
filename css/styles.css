@@ -366,3 +366,52 @@ a.control-fila { color: inherit; text-decoration: none; }
 .lista-prod { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
 .btn.rojo { color: var(--rojo); }
 .config select { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); max-width: 100%; }
+
+/* ---------- Temperaturas de contenedores ---------- */
+.turnos { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.turno { border: 1.5px solid var(--border); background: var(--card); border-radius: 14px; padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.turno b { font-size: 20px; }
+.turno small { color: var(--dim); font-size: 12px; }
+.turno.activo { border-color: var(--azul); background: #e8eefc; box-shadow: 0 0 0 3px rgba(58, 99, 196, .15); }
+@media (prefers-color-scheme: dark) { .turno.activo { background: #1d2740; } }
+.temp-barra { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.temp-progreso { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.temp-progreso .estado { padding: 4px 10px; font-size: 13px; }
+.temp-lista { display: flex; flex-direction: column; gap: 12px; padding-bottom: 40px; }
+.temp-card { background: var(--card); border-radius: 18px; box-shadow: var(--shadow); padding: 14px 16px; border-left: 8px solid #3a63c4; scroll-margin: 90px; }
+.temp-card.refri { border-left-color: #1b9aaa; }
+.temp-card.otro { border-left-color: var(--dim); }
+.temp-card.ok { background: var(--ok-bg); }
+.temp-card.fuera { background: var(--err-bg); border-left-color: var(--rojo); }
+.temp-cab { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.temp-cab strong { font-size: 20px; display: block; }
+.temp-cab small { color: var(--dim); }
+.temp-ico { font-size: 28px; }
+.temp-captura { display: grid; grid-template-columns: 58px 1fr auto; gap: 8px; align-items: center; margin-top: 12px; }
+.temp-signo { min-height: 58px; font-size: 28px; font-weight: 800; background: #e8eefc; color: #3a63c4; border-radius: 14px; }
+.temp-campo { position: relative; }
+.temp-input { width: 100%; font-size: 30px; font-weight: 800; text-align: center; padding: 10px 44px 10px 10px; border: 2px solid var(--border); border-radius: 14px; background: var(--card); font-variant-numeric: tabular-nums; }
+.temp-input.ok { border-color: var(--verde); color: var(--verde); }
+.temp-input.fuera { border-color: var(--rojo); color: var(--rojo); }
+.temp-campo span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--dim); font-weight: 700; }
+.temp-guardar { min-height: 58px; padding: 0 22px; font-size: 17px; }
+.temp-aviso { color: var(--rojo); font-weight: 700; margin-top: 6px; min-height: 1em; }
+.temp-mas summary { cursor: pointer; color: var(--dim); font-size: 14px; padding: 8px 0 4px; }
+.temp-mas textarea { width: 100%; border: 1.5px solid var(--border); border-radius: 12px; padding: 10px; font-size: 15px; }
+.temp-mas textarea.requerida { border-color: var(--rojo); }
+.temp-hecho { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; margin-top: 10px; }
+.temp-valor { font-size: 32px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.temp-card.ok .temp-valor { color: var(--verde); }
+.temp-card.fuera .temp-valor { color: var(--rojo); }
+.temp-info { display: flex; flex-direction: column; }
+.temp-info small { color: var(--dim); }
+.temp-obs { font-style: italic; }
+.temp-tabla { font-size: 12px; white-space: nowrap; }
+.temp-tabla th, .temp-tabla td { text-align: center; padding: 4px 6px; }
+.temp-tabla td.td-prod { text-align: left; }
+.temp-tabla .sep { border-left: 2px solid var(--border); }
+.temp-tabla td.t-ok { background: var(--ok-bg); color: var(--verde); font-weight: 700; }
+.temp-tabla td.t-fuera { background: var(--err-bg); color: var(--rojo); font-weight: 800; }
+.temp-tabla td.t-falta { color: var(--dim); }
+.tabla-cont select { padding: 7px; border-radius: 8px; border: 1px solid var(--border); }
+@media (max-width: 760px) { .temp-captura { grid-template-columns: 54px 1fr; } .temp-guardar { grid-column: 1 / -1; } .temp-hecho { grid-template-columns: auto 1fr; } .temp-hecho .btn { grid-column: 1 / -1; } }

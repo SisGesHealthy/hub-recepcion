@@ -10,9 +10,9 @@
 import { CONFIG } from "./config.js";
 import { el, clear } from "./dom.js";
 import * as st from "./store.js";
-import { toast, confirmar } from "./ui.js";
+import { toast, confirmar, aNumero } from "./ui.js";
 
-const NOMBRES = { bodega: "Bodega", calidad: "Calidad (MP)", planta: "Calidad - Planta", pesos: "Control de pesos", config: "Configuración" };
+const NOMBRES = { bodega: "Bodega", calidad: "Calidad (MP)", planta: "Calidad - Planta", pesos: "Control de pesos", temp: "Temperaturas", config: "Configuración" };
 
 export async function render(vista) {
   await st.cargarConfig({ esperar: true });
@@ -69,6 +69,57 @@ export async function render(vista) {
   const bod = lista(CONFIG.bodegueros);
   const lineas = (t) => [...new Set(t.value.split("\n").map((x) => x.trim()).filter(Boolean))];
 
+  // ---- contenedores (Temperaturas) ----
+  const conts = CONFIG.contenedores.map((c) => ({ ...c }));
+  const tCont = el("table", { class: "doc-tabla tabla-accesos tabla-cont" });
+  const num = (v) => el("input", { type: "text", inputmode: "decimal", value: v === null || v === undefined ? "" : String(v).replace(".", ","), class: "in-num" });
+  const pintarCont = () => {
+    clear(tCont);
+    tCont.appendChild(el("tr", {}, ["Nombre", "Tipo", "Mín °C", "Máx °C", "Activo", ""].map((x) => el("th", {}, x))));
+    conts.forEach((c, i) => {
+      const nombre = el("input", { type: "text", value: c.nombre || "", class: "in-correo" });
+      nombre.addEventListener("input", () => (c.nombre = nombre.value.trim()));
+      const tipo = el("select", {}, ["Congelación", "Refrigeración", "Otro"].map((t) => el("option", { value: t }, t)));
+      tipo.value = c.tipo || "Congelación";
+      tipo.addEventListener("change", () => (c.tipo = tipo.value));
+      const mn = num(c.min);
+      mn.addEventListener("input", () => (c.min = aNumero(mn.value.replace("−", "-"))));
+      const mx = num(c.max);
+      mx.addEventListener("input", () => (c.max = aNumero(mx.value.replace("−", "-"))));
+      const act = el("input", { type: "checkbox", ...(c.activo !== false ? { checked: "" } : {}) });
+      act.addEventListener("change", () => (c.activo = act.checked));
+      tCont.appendChild(
+        el("tr", {}, [
+          el("td", {}, nombre),
+          el("td", {}, tipo),
+          el("td", {}, mn),
+          el("td", {}, mx),
+          el("td", { class: "td-check" }, act),
+          el("td", {}, el("button", {
+            class: "icon-btn rojo",
+            title: "Quitar contenedor",
+            onclick: async () => {
+              if (!(await confirmar("Quitar contenedor", `${c.nombre} deja de aparecer en el registro. Sus lecturas anteriores se conservan (para pausarlo sin quitarlo, desmarca «Activo»).`, { si: "Quitar", peligro: true }))) return;
+              conts.splice(i, 1);
+              pintarCont();
+            },
+          }, "✕")),
+        ])
+      );
+    });
+  };
+  pintarCont();
+  const agregarCont = el("button", {
+    class: "btn btn-sec",
+    type: "button",
+    onclick: () => {
+      const n = Math.max(0, ...conts.map((c) => Number(String(c.id).replace(/\D/g, "")) || 0)) + 1;
+      conts.push({ id: `C${n}`, nombre: `Contenedor ${n}`, tipo: "Congelación", min: -30, max: -15, activo: true });
+      pintarCont();
+    },
+  }, "+ Agregar contenedor");
+  const turnos = el("input", { type: "text", value: CONFIG.turnosTemperatura.join(", "), class: "in-correo", placeholder: "06:00, 14:30, 22:00" });
+
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Guardar configuración");
   btn.addEventListener("click", async () => {
     const r = lineas(resp);
@@ -83,10 +134,14 @@ export async function render(vista) {
     if (sinModulo.length && !(await confirmar("Cuentas sin módulos", `${sinModulo.join(", ")} no tiene ningún módulo marcado: verá "Sin acceso". ¿Guardar igual?`, { si: "Guardar" }))) return;
     const externos = cuentas.filter((f) => !f.correo.endsWith("@healthyfood.com.ec")).map((f) => f.correo);
     if (externos.length && !(await confirmar("Cuentas externas", `${externos.join(", ")} no es del dominio healthyfood.com.ec. ¿Darle acceso igual?`, { si: "Sí" }))) return;
+    const ts = turnos.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+    if (!ts.length || ts.some((t) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(t))) return toast("Turnos: usa el formato 06:00, 14:30, 22:00", "err");
+    if (conts.some((c) => !c.nombre)) return toast("Hay un contenedor sin nombre", "err");
+    if (conts.some((c) => c.min != null && c.max != null && c.min > c.max)) return toast("En un contenedor el mínimo es mayor que el máximo", "err");
     const accesos = { [CONFIG.administrador]: [...st.MODULOS], ...Object.fromEntries(cuentas.map((f) => [f.correo, st.MODULOS.filter((m) => f.mods.has(m))])) };
     btn.disabled = true;
     try {
-      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas });
+      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas, contenedores: conts, turnosTemperatura: [...ts].sort() });
       toast("Configuración guardada: cada equipo la toma al volver a abrir la app");
     } catch (e) {
       toast("No se pudo guardar en SharePoint: " + e.message, "err");
@@ -107,6 +162,13 @@ export async function render(vista) {
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Responsables de liberación (Calidad - Planta y Control de pesos) · uno por línea"), resp]),
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Bodegueros (iniciales, Bodega) · uno por línea"), bod]),
       el("p", { class: "nota" }, `Registros antiguos con iniciales se muestran con nombre: ${Object.entries(CONFIG.inicialesHistoricas).map(([k, v]) => `${k} = ${v}`).join(" · ")}. Quitar a alguien no borra sus registros.`),
+    ]),
+    el("section", { class: "card config" }, [
+      el("h2", {}, "Contenedores (Temperaturas)"),
+      el("p", { class: "nota" }, "Cada contenedor activo aparece como una tarjeta en el registro de temperaturas, en este orden. El rango define cuándo una lectura queda en rojo."),
+      el("div", { class: "reporte-wrap" }, tCont),
+      el("div", { class: "fila-botones izq" }, agregarCont),
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Horarios de registro (turnos)"), turnos]),
     ]),
     btn
   );
