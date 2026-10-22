@@ -119,6 +119,9 @@ export const CONFIG = {
   // vive en SharePoint, así solo un usuario con sesión puede leerlas.
   of: {
     datos: "data/of_produccion.json",
+    // Copia directa del repositorio: llega apenas el script la sube, sin esperar
+    // a que GitHub Pages vuelva a publicar (a veces tarda o queda en cola).
+    datosDirecto: "https://raw.githubusercontent.com/SisGesHealthy/hub-recepcion/master/data/of_produccion.json",
     clave: "/sites/EspacioColaborativo/Documentos compartidos/HubRecepcion/clave_of.txt",
     columnaLotes: "OrdenFabricacion", // columna agregada a la lista Lotes
     horasVigencia: 3, // más viejo que esto → aviso "datos de Odoo desactualizados"

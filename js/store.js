@@ -776,7 +776,12 @@ async function descifrar(sobre, claveB64) {
 export async function cargarOF() {
   if (CONFIG.useMock) return (await import("./mock.js")).ofsDemo();
   try {
-    const sobre = await (await fetch(`${CONFIG.of.datos}?t=${Date.now()}`, { cache: "no-store" })).json();
+    const leer = async (u) => {
+      const r = await fetch(`${u}?t=${Date.now()}`, { cache: "no-store" });
+      if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
+      return r.json();
+    };
+    const sobre = await leer(CONFIG.of.datosDirecto).catch(() => leer(CONFIG.of.datos));
     let clave = await kv.get("of:clave");
     let datos;
     try {
