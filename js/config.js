@@ -51,10 +51,13 @@ export const CONFIG = {
   administrador: "sistemasdegestion@healthyfood.com.ec",
   // Valor inicial; la lista vigente se edita en la app (Configuración →
   // Cuentas con acceso) y se guarda en configuracion.json.
+  // Hub Averías (otra app, integrada en el módulo "averias").
+  averias: { url: "https://hub-averias.mttohealthy.workers.dev/" },
+
   accesos: {
-    "bodega2@healthyfood.com.ec": ["bodega", "temp"],
-    "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos"],
-    "calidad2@healthyfood.com.ec": ["calidad", "planta", "pesos"],
+    "bodega2@healthyfood.com.ec": ["bodega", "temp", "averias"],
+    "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias"],
+    "calidad2@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias"],
     // "config" = administrador: configuración y parámetros de peso
     "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta", "pesos", "config"],
   },

@@ -32,7 +32,7 @@ export function getApi() {
 
 // ---------------- usuario y accesos ----------------
 
-export const MODULOS = ["bodega", "calidad", "planta", "pesos", "temp", "config"];
+export const MODULOS = ["bodega", "calidad", "planta", "pesos", "temp", "averias", "config"];
 const accesosDe = (c) => (c === CONFIG.administrador ? [...MODULOS] : CONFIG.accesos[c] || []);
 
 export function setUsuario(nombre, correo) {
@@ -1047,6 +1047,8 @@ function aplicarConfig(cfg) {
       Object.entries(cfg.accesos).map(([k, v]) => {
         let mods = v.filter((m) => MODULOS.includes(m));
         if (!(cfg.accesosVersion >= 2) && mods.includes("bodega") && !mods.includes("temp")) mods = [...mods, "temp"];
+        // v3: Averías para todas las cuentas que ya tenían acceso (bodega reporta, Calidad libera).
+        if (!(cfg.accesosVersion >= 3) && mods.length && !mods.includes("averias")) mods = [...mods, "averias"];
         return [k.trim().toLowerCase(), mods];
       })
     );
@@ -1087,7 +1089,7 @@ export async function cargarConfig({ esperar = false } = {}) {
 
 export async function guardarConfig(cfg) {
   const { carpeta, nombre } = CONFIG.archivoConfig;
-  const datos = { ...cfg, accesosVersion: 2, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
+  const datos = { ...cfg, accesosVersion: 3, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
   await api.escribirArchivo(carpeta, nombre, JSON.stringify(datos, null, 2));
   await kv.set("cache:config", datos);
   await cargarConfig();

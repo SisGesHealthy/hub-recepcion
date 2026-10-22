@@ -14,6 +14,7 @@ const DEPTOS = {
   planta: { titulo: "Calidad - Planta", sub: "Liberación de producto en proceso", icono: "🏭", ruta: "#/planta" },
   pesos: { titulo: "Control de pesos", sub: "Muestreo en dosificado", icono: "balanza", ruta: "#/pesos" },
   temp: { titulo: "Temperaturas", sub: "Contenedores · 3 turnos al día", icono: "termometro", ruta: "#/temp" },
+  averias: { titulo: "Averías", sub: "Reportar · Calidad libera el equipo (PIN)", icono: "🔧", ruta: "#/averias" },
   config: { titulo: "Configuración", sub: "Responsables y bodegueros", icono: "⚙️", ruta: "#/config" },
 };
 
@@ -127,6 +128,7 @@ async function rutear() {
   else if (seccion === "config") (await import("./configuracion.js")).render(vista);
   else if (seccion === "pesos") (await import("./pesos.js")).render(vista, resto);
   else if (seccion === "temp") (await import("./temperaturas.js")).render(vista, resto);
+  else if (seccion === "averias") (await import("./averias.js")).render(vista);
 }
 
 function inicio(u) {

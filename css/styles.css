@@ -63,6 +63,12 @@ a { color: inherit; text-decoration: none; }
 .depto { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 30px 18px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); transition: transform .12s; }
 .depto:active { transform: scale(.98); }
 .depto-ico { font-size: 44px; }
+/* Averías integrada: ocupa toda la pantalla bajo una cabecera con "Volver". */
+body.modo-averias { overflow: hidden; }
+body.modo-averias .barra { display: none; }
+body.modo-averias .vista { padding: 0; max-width: none; }
+.averias-cab { position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; background: var(--card); border-bottom: 1px solid var(--border); }
+.averias-frame { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; width: 100%; height: calc(100dvh - 48px); border: 0; background: #fff; }
 .depto strong { font-size: 20px; }
 .depto small { color: var(--dim); }
 
