@@ -1,13 +1,9 @@
 name: OF de producción (Odoo → Calidad - Planta)
 
 on:
-  schedule:
-    # Cada hora de 05:07 a 20:07 Ecuador (UTC-5) = 10:07 a 01:07 UTC.
-    # Las OF se crean y confirman durante el día; una sola corrida diaria
-    # dejaría fuera las de la tarde. Minuto 7 y no :00: GitHub descarta
-    # primero las corridas programadas a la hora en punto cuando está cargado.
-    - cron: '7 10-23 * * *'
-    - cron: '7 0-1 * * *'
+  # Lo dispara cron-job.org cada hora de 05:17 a 20:17 (America/Guayaquil)
+  # vía la API (workflow_dispatch), tarea "OF de producción → Hub Recepción".
+  # Sin schedule interno: GitHub se saltaba corridas y duplicaba las de cron-job.
   workflow_dispatch:
 
 permissions:
