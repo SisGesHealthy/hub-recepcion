@@ -435,6 +435,9 @@ a.control-fila { color: inherit; text-decoration: none; }
 /* temperaturas: turno fijo y foto obligatoria */
 .turno.bloqueado { opacity: .55; cursor: not-allowed; }
 .turno-tag { font-size: 11px; font-weight: 700; color: var(--azul); }
+.turno .turno-hora { font-size: 11px; }
+.in-hora { font-size: 16px; padding: 6px 8px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--card); color: var(--ink); }
+.temp-cerrado h2 { color: var(--ambar); }
 .temp-foto { width: 100%; margin-top: 10px; min-height: 52px; background: #e8eefc; color: #3a63c4; border: 1.5px dashed #3a63c4; font-size: 16px; }
 .temp-foto.lista { background: var(--ok-bg); color: var(--verde); border-style: solid; border-color: var(--verde); }
 .temp-foto.falta { background: var(--err-bg); color: var(--rojo); border-color: var(--rojo); }

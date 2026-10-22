@@ -118,7 +118,28 @@ export async function render(vista) {
       pintarCont();
     },
   }, "+ Agregar contenedor");
-  const turnos = el("input", { type: "text", value: CONFIG.turnosTemperatura.join(", "), class: "in-correo", placeholder: "06:00, 14:30, 22:00" });
+  // ---- turnos de temperatura: inicio y hasta qué hora se puede registrar ----
+  const turnosEd = CONFIG.turnosTemperatura.map((t) => ({ inicio: t, fin: st.finTurno(t) }));
+  const tTurnos = el("table", { class: "doc-tabla tabla-accesos" });
+  const pintarTurnos = () => {
+    clear(tTurnos);
+    tTurnos.appendChild(el("tr", {}, ["Turno (inicio)", "Se puede registrar hasta", ""].map((x) => el("th", {}, x))));
+    turnosEd.forEach((x, i) => {
+      const ini = el("input", { type: "time", value: x.inicio, class: "in-hora" });
+      ini.addEventListener("input", () => (x.inicio = ini.value));
+      const fin = el("input", { type: "time", value: x.fin, class: "in-hora" });
+      fin.addEventListener("input", () => (x.fin = fin.value));
+      tTurnos.appendChild(
+        el("tr", {}, [
+          el("td", {}, ini),
+          el("td", {}, fin),
+          el("td", {}, el("button", { class: "icon-btn rojo", title: "Quitar turno", onclick: () => (turnosEd.splice(i, 1), pintarTurnos()) }, "✕")),
+        ])
+      );
+    });
+  };
+  pintarTurnos();
+  const agregarTurno = el("button", { class: "btn btn-sec", type: "button", onclick: () => (turnosEd.push({ inicio: "", fin: "" }), pintarTurnos()) }, "+ Agregar turno");
 
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Guardar configuración");
   btn.addEventListener("click", async () => {
@@ -134,14 +155,24 @@ export async function render(vista) {
     if (sinModulo.length && !(await confirmar("Cuentas sin módulos", `${sinModulo.join(", ")} no tiene ningún módulo marcado: verá "Sin acceso". ¿Guardar igual?`, { si: "Guardar" }))) return;
     const externos = cuentas.filter((f) => !f.correo.endsWith("@healthyfood.com.ec")).map((f) => f.correo);
     if (externos.length && !(await confirmar("Cuentas externas", `${externos.join(", ")} no es del dominio healthyfood.com.ec. ¿Darle acceso igual?`, { si: "Sí" }))) return;
-    const ts = turnos.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
-    if (!ts.length || ts.some((t) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(t))) return toast("Turnos: usa el formato 06:00, 14:30, 22:00", "err");
+    const hora = (t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t || "");
+    const ts = turnosEd.filter((x) => x.inicio || x.fin);
+    if (!ts.length) return toast("Debe haber al menos un turno de temperaturas", "err");
+    if (ts.some((x) => !hora(x.inicio) || !hora(x.fin))) return toast("Turnos: completa la hora de inicio y hasta qué hora se registra", "err");
+    if (ts.some((x) => x.inicio === x.fin)) return toast("Turnos: el inicio y el fin no pueden ser iguales", "err");
+    if (new Set(ts.map((x) => x.inicio)).size !== ts.length) return toast("Turnos: hay dos turnos con la misma hora de inicio", "err");
+    // Que los horarios no se pisen (en minutos del día, los que pasan medianoche se parten).
+    const tramos = ts.flatMap((x) => {
+      const a = st.aMinutos(x.inicio), b = st.aMinutos(x.fin);
+      return b > a ? [[a, b, x.inicio]] : [[a, 1440, x.inicio], [0, b, x.inicio]];
+    }).sort((p, q) => p[0] - q[0]);
+    for (let k = 1; k < tramos.length; k++) if (tramos[k][0] < tramos[k - 1][1]) return toast(`Turnos: el horario de ${tramos[k][2]} se cruza con el de ${tramos[k - 1][2]}`, "err");
     if (conts.some((c) => !c.nombre)) return toast("Hay un contenedor sin nombre", "err");
     if (conts.some((c) => c.min != null && c.max != null && c.min > c.max)) return toast("En un contenedor el mínimo es mayor que el máximo", "err");
     const accesos = { [CONFIG.administrador]: [...st.MODULOS], ...Object.fromEntries(cuentas.map((f) => [f.correo, st.MODULOS.filter((m) => f.mods.has(m))])) };
     btn.disabled = true;
     try {
-      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas, contenedores: conts, turnosTemperatura: [...ts].sort() });
+      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas, contenedores: conts, turnosTemperatura: ts.map((x) => x.inicio).sort(), ventanasTemperatura: Object.fromEntries(ts.map((x) => [x.inicio, x.fin])) });
       toast("Configuración guardada: cada equipo la toma al volver a abrir la app");
     } catch (e) {
       toast("No se pudo guardar en SharePoint: " + e.message, "err");
@@ -168,7 +199,10 @@ export async function render(vista) {
       el("p", { class: "nota" }, "Cada contenedor activo aparece como una tarjeta en el registro de temperaturas, en este orden. El rango define cuándo una lectura queda en rojo."),
       el("div", { class: "reporte-wrap" }, tCont),
       el("div", { class: "fila-botones izq" }, agregarCont),
-      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Horarios de registro (turnos)"), turnos]),
+      el("h3", {}, "Turnos y horario de registro"),
+      el("p", { class: "nota" }, "Bodega solo puede registrar un turno entre su inicio y su «hasta». Fuera de esos horarios la pantalla no deja registrar. Si el «hasta» es menor que el inicio, el horario pasa la medianoche (ej. 22:00 → 00:30)."),
+      el("div", { class: "reporte-wrap" }, tTurnos),
+      el("div", { class: "fila-botones izq" }, agregarTurno),
     ]),
     btn
   );

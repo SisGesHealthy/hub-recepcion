@@ -23,13 +23,13 @@ export function render(vista, resto) {
   // Regla: solo se registra el turno que detecta el sistema por la hora, del
   // día en curso. No se elige otro turno ni se registran días anteriores
   // (aunque se escriba otra fecha en la dirección).
-  const { dia, turno } = st.turnoActual();
-  return pantallaTurno(vista, dia, turno);
+  const { dia, turno, abierto } = st.turnoActual();
+  return pantallaTurno(vista, dia, turno, abierto);
 }
 
 // ---------------- registro del turno ----------------
 
-async function pantallaTurno(vista, dia, turno) {
+async function pantallaTurno(vista, dia, turno, abierto) {
   const bodeguero = el("select", { class: "dias" }, [el("option", { value: "" }, "Bodeguero…"), ...CONFIG.bodegueros.map((b) => el("option", { value: b }, b))]);
   bodeguero.value = (await kv.get("ultimoBodeguero", "")) || "";
   const progreso = el("div", { class: "temp-progreso" });
@@ -42,7 +42,7 @@ async function pantallaTurno(vista, dia, turno) {
         el("a", { class: "btn btn-sec", href: `#/temp/historial/${dia}` }, "📈 Historial"),
       ]),
     ]),
-    el("div", { class: "turnos" }, CONFIG.turnosTemperatura.map((t) => el("div", { class: `turno ${t === turno ? "activo" : "bloqueado"}`, title: t === turno ? "Turno actual" : "Solo se registra el turno actual" }, [el("b", {}, t), el("small", { "data-turno": t }, ""), t === turno ? el("span", { class: "turno-tag" }, "Turno actual") : null]))),
+    el("div", { class: "turnos" }, CONFIG.turnosTemperatura.map((t) => el("div", { class: `turno ${t === turno && abierto ? "activo" : "bloqueado"}`, title: t === turno && abierto ? "Turno actual" : "Solo se registra el turno actual, dentro de su horario" }, [el("b", {}, t), el("small", { class: "turno-hora" }, `hasta ${st.finTurno(t)}`), el("small", { "data-turno": t }, ""), t === turno ? el("span", { class: "turno-tag" }, abierto ? "Turno actual" : "Próximo") : null]))),
     el("div", { class: "temp-barra" }, [progreso, bodeguero]),
     lista
   );
@@ -50,9 +50,9 @@ async function pantallaTurno(vista, dia, turno) {
   const vigilar = setInterval(() => {
     if (!document.body.contains(lista)) return clearInterval(vigilar);
     const ahora = st.turnoActual();
-    if (ahora.dia !== dia || ahora.turno !== turno) {
+    if (ahora.dia !== dia || ahora.turno !== turno || ahora.abierto !== abierto) {
       clearInterval(vigilar);
-      toast(`Cambió el turno: ${ahora.turno}`);
+      toast(ahora.abierto ? `Se abrió el turno ${ahora.turno}` : `Se cerró el horario del turno ${turno}`);
       location.reload();
     }
   }, 60000);
@@ -88,6 +88,15 @@ async function pantallaTurno(vista, dia, turno) {
     if (r.Temperatura !== null && r.Temperatura !== undefined) ultimos[r.ContenedorId] = Number(r.Temperatura);
 
   clear(lista);
+  if (!abierto) {
+    pintarProgreso();
+    return lista.appendChild(
+      el("div", { class: "vacio temp-cerrado" }, [
+        el("h2", {}, "Fuera del horario de registro"),
+        el("p", {}, `El próximo turno es el de las ${turno} (${dia === st.hoyISO() ? "hoy" : st.fmtDia(dia)}) y se puede registrar de ${turno} a ${st.finTurno(turno)}. La pantalla se abre sola a esa hora.`),
+      ])
+    );
+  }
   if (!activos().length) return vacio(lista, "No hay contenedores configurados (Configuración → Contenedores).");
   for (const c of activos()) lista.appendChild(tarjeta(c));
   pintarProgreso();
@@ -206,6 +215,8 @@ async function pantallaTurno(vista, dia, turno) {
         // Foto del panel obligatoria siempre (también al corregir).
         if (!foto) return toast(`${c.nombre}: falta la foto del panel`, "err"), btnFoto.classList.add("falta");
         if (!bodeguero.value) return toast("Elige el bodeguero arriba", "err"), bodeguero.focus();
+        const ahora = st.turnoActual();
+        if (!ahora.abierto || ahora.turno !== turno || ahora.dia !== dia) return toast(`Se cerró el horario del turno ${turno} (hasta ${st.finTurno(turno)})`, "err");
         btn.disabled = true;
         const nuevo = await st.registrarTemperatura({ dia, turno, contenedor: c, temperatura: x, observaciones: obs.value.trim(), bodeguero: bodeguero.value, existente: !!r }, foto);
         ultimos[c.id] = x;

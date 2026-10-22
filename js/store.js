@@ -1063,6 +1063,7 @@ function aplicarConfig(cfg) {
   if (cfg?.bodegueros?.length) CONFIG.bodegueros = cfg.bodegueros;
   if (cfg?.contenedores?.length) CONFIG.contenedores = cfg.contenedores;
   if (cfg?.turnosTemperatura?.length) CONFIG.turnosTemperatura = cfg.turnosTemperatura;
+  if (cfg?.ventanasTemperatura) CONFIG.ventanasTemperatura = cfg.ventanasTemperatura;
   if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
 }
 
@@ -1520,19 +1521,33 @@ export function estadoTemp(t, c) {
 
 // Turno que corresponde a la hora actual: el más cercano (entre 22:00 y las
 // 02:00 del día siguiente sigue contando como el de las 22:00 del día anterior).
+const aMin = (s) => s.split(":").reduce((h, m) => Number(h) * 60 + Number(m));
+export const aMinutos = aMin;
+// Hasta qué hora se puede registrar un turno (sin configurar: 2 horas).
+export function finTurno(t) {
+  const f = CONFIG.ventanasTemperatura?.[t];
+  if (f && /^\d{2}:\d{2}$/.test(f)) return f;
+  const m = (aMin(t) + 120) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+// Turno que se puede registrar ahora. abierto=false si la hora está fuera de
+// todos los horarios: entonces turno/dia apuntan al PRÓXIMO turno (para avisar).
+// Un horario que pasa la medianoche pertenece al día en que empezó.
 export function turnoActual(ahora = new Date()) {
-  const hhmm = (s) => s.split(":").reduce((h, m) => Number(h) * 60 + Number(m));
   const local = new Date(ahora.toLocaleString("en-US", { timeZone: TZ }));
-  let min = local.getHours() * 60 + local.getMinutes();
-  let dia = hoyISO();
-  const turnos = CONFIG.turnosTemperatura;
-  if (min < 3 * 60) {
-    // madrugada: último turno del día anterior
-    return { dia: sumarDias(dia, -1), turno: turnos[turnos.length - 1] };
+  const min = local.getHours() * 60 + local.getMinutes();
+  const hoy = ahora.toLocaleDateString("en-CA", { timeZone: TZ });
+  const turnos = [...CONFIG.turnosTemperatura].sort();
+  for (const t of turnos) {
+    const ini = aMin(t), fin = aMin(finTurno(t));
+    const cruza = fin <= ini;
+    if (!cruza && min >= ini && min < fin) return { dia: hoy, turno: t, abierto: true, fin: finTurno(t) };
+    if (cruza && min >= ini) return { dia: hoy, turno: t, abierto: true, fin: finTurno(t) };
+    if (cruza && min < fin) return { dia: sumarDias(hoy, -1), turno: t, abierto: true, fin: finTurno(t) };
   }
-  let mejor = turnos[0];
-  for (const t of turnos) if (Math.abs(hhmm(t) - min) < Math.abs(hhmm(mejor) - min)) mejor = t;
-  return { dia, turno: mejor };
+  const prox = turnos.find((t) => aMin(t) > min);
+  return prox ? { dia: hoy, turno: prox, abierto: false, fin: finTurno(prox) } : { dia: sumarDias(hoy, 1), turno: turnos[0], abierto: false, fin: finTurno(turnos[0]) };
 }
 
 export async function temperaturasDelDia(dia) {

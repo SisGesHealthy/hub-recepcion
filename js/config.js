@@ -65,6 +65,9 @@ export const CONFIG = {
   // Temperaturas de contenedores: turnos del día y contenedores (valor por
   // defecto; la lista vigente se edita en Configuración → Contenedores).
   turnosTemperatura: ["06:00", "14:30", "22:00"],
+  // Horario en que se puede registrar cada turno (inicio → hasta). "Hasta"
+  // menor que el inicio = pasa la medianoche (ej. 22:00 → 00:30).
+  ventanasTemperatura: { "06:00": "08:00", "14:30": "16:30", "22:00": "00:00" },
   contenedores: [
     ...Array.from({ length: 9 }, (_, i) => ({ id: `C${i + 1}`, nombre: `Contenedor ${i + 1}`, tipo: "Congelación", min: -30, max: -15, activo: true })),
     { id: "C10", nombre: "Contenedor 10", tipo: "Refrigeración", min: 0, max: 5, activo: true },
