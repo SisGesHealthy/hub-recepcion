@@ -36,9 +36,14 @@ def odoo():
     return lambda modelo, metodo, *args, **kw: models.execute_kw(db, uid, pw, modelo, metodo, list(args), kw)
 
 
+DIAS_ATRAS = 60
+
+
 def leer_ofs(x):
     hoy = dt.datetime.now(TZ).date()
-    desde, hasta = hoy - dt.timedelta(days=1), hoy + dt.timedelta(days=2)
+    # 60 días hacia atrás: Control de pesos y Calidad - Planta consultan días
+    # anteriores (OF ya terminadas). Son pocas OF por día: el archivo sigue chico.
+    desde, hasta = hoy - dt.timedelta(days=DIAS_ATRAS), hoy + dt.timedelta(days=2)
     ofs = x(
         "mrp.production", "search_read",
         [["production_date", ">=", desde.isoformat()], ["production_date", "<=", hasta.isoformat()], ["state", "!=", "cancel"]],

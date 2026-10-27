@@ -67,10 +67,15 @@ async function pantallaDia(vista, dia) {
 
   const [datos, params, controles, clienteDe] = await Promise.all([st.cargarOF(), st.parametrosPeso(), st.controlesDelDia(dia), clientePorCodigo()]);
   const ofs = (datos.ofs || []).filter((o) => o.fecha === dia && !/^REP-/i.test(o.codigo));
+  // Días más antiguos que la exportación de Odoo (60 días): las OF se rearman
+  // desde los controles guardados, así el histórico nunca se pierde.
+  for (const c of controles)
+    if (c.OrdenFabricacion && !ofs.some((o) => o.of === c.OrdenFabricacion))
+      ofs.push({ of: c.OrdenFabricacion, codigo: c.CodigoProducto || "", producto: c.Producto || "", fecha: dia, estado: "histórico", peso_kg: 0, uom_producto: "", cantidad: null, unidad: "" });
   sub.textContent = `Producción del ${st.fmtDia(dia)} · ${ofs.length} ${ofs.length === 1 ? "orden" : "órdenes"} · ${controles.length} ${controles.length === 1 ? "control registrado" : "controles registrados"}`;
   clear(lista);
   if (datos.error) lista.appendChild(el("div", { class: "aviso" }, datos.error));
-  if (!ofs.length) return lista.appendChild(el("div", { class: "vacio chico" }, "Odoo no tiene órdenes de fabricación con esta fecha de producción."));
+  if (!ofs.length) return lista.appendChild(el("div", { class: "vacio chico" }, "Sin órdenes de fabricación ni controles de peso con esta fecha de producción."));
 
   for (const o of ofs) {
     const esp = st.especPeso(o, params);
