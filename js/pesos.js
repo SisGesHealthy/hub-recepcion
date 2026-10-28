@@ -17,7 +17,7 @@ const num = (v, u) => (v === null || v === undefined ? "—" : `${String(Math.ro
 
 export async function render(vista, resto) {
   if (resto[0] === "parametros") return esAdmin() ? parametros(vista) : vacio(vista, "Solo Sistemas administra los parámetros de peso.");
-  if (resto[0] === "visita") return pantallaVisita(vista);
+  if (resto[0] === "visita") return pantallaVisita(vista, resto[1]);
   if (resto[0] === "control" && resto[1]) return pantallaControl(vista, Number(resto[1]));
   const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
   return pantallaDia(vista, dia);
@@ -35,7 +35,7 @@ async function pantallaDia(vista, dia) {
   const ir = (d) => (location.hash = `#/pesos/${d}`);
   const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Cargando producción…"));
   const sub = el("p", { class: "sub" });
-  const enCurso = await st.visitaActual();
+  const enCurso = await st.visitasEnCurso();
   vista.append(
     el("div", { class: "cab" }, [
       el("div", { class: "cab-titulo-ico" }, [iconoBalanza("ico-titulo"), el("div", {}, [el("h1", { class: "titulo" }, "Control de pesos"), sub])]),
@@ -47,19 +47,23 @@ async function pantallaDia(vista, dia) {
         esAdmin() ? el("a", { class: "btn btn-sec", href: "#/pesos/parametros" }, "⚙ Parámetros de peso") : null,
       ]),
     ]),
-    enCurso
-      ? el("div", { class: "aviso" }, [
-          `Hay un control en curso: ${enCurso.of.codigo} · parada ${enCurso.parada || "—"} · ${enCurso.muestras.length} muestras. `,
-          el("a", { href: "#/pesos/visita", class: "btn btn-azul btn-mini" }, "Continuar"),
-          " ",
-          el("button", {
-            class: "btn btn-sec btn-mini",
-            onclick: async () => {
-              if (!(await confirmar("Descartar control en curso", `Se borran las ${enCurso.muestras.length} muestras de este control no guardado. Un control ya guardado no se borra.`, { si: "Descartar", peligro: true }))) return;
-              await st.descartarVisita();
-              location.reload();
-            },
-          }, "Descartar"),
+    enCurso.length
+      ? el("div", { class: "aviso en-curso" }, [
+          el("b", {}, enCurso.length === 1 ? "Control en curso" : `${enCurso.length} controles en curso`),
+          ...enCurso.map((v) =>
+            el("div", { class: "en-curso-fila" }, [
+              el("span", {}, `${v.of.codigo} · parada ${v.parada || "—"}${v.lote ? ` · ${v.lote}` : ""} · ${v.muestras.length} muestras · ${st.fmtHora(v.inicio)}`),
+              el("a", { href: `#/pesos/visita/${v.id}`, class: "btn btn-azul btn-mini" }, "Continuar"),
+              el("button", {
+                class: "btn btn-sec btn-mini",
+                onclick: async () => {
+                  if (!(await confirmar("Descartar control en curso", `Se borran las ${v.muestras.length} muestras de ${v.of.codigo} · parada ${v.parada || "—"} (no guardado). Un control ya guardado no se borra.`, { si: "Descartar", peligro: true }))) return;
+                  await st.descartarVisita(v.id);
+                  location.reload();
+                },
+              }, "Descartar"),
+            ])
+          ),
         ])
       : el("div"),
     lista
@@ -93,7 +97,7 @@ async function pantallaDia(vista, dia) {
             el("span", { class: "orden-fecha" }, `${o.of} · ${clienteDe(o.codigo) || "—"} · ${o.estado}`),
             el("span", { class: esp.min === null && esp.max === null ? "sin-rango" : "orden-fecha" }, rango),
           ]),
-          el("div", { class: "orden-accion" }, el("button", { class: "btn btn-verde", disabled: enCurso ? "" : null, onclick: () => iniciar(o, esp, clienteDe(o.codigo), dia) }, "Nuevo control")),
+          el("div", { class: "orden-accion" }, el("button", { class: "btn btn-verde", onclick: () => iniciar(o, esp, clienteDe(o.codigo), dia) }, "Nuevo control")),
         ]),
         suyos.length
           ? el(
@@ -163,8 +167,9 @@ async function iniciar(of, esp, cliente, dia) {
       esp = { nominal: n, min: null, max: null, unidad: presU.value, origen: "analista", param: null, clave: null };
     }
     if (!equipo.value.trim()) return toast("Indica quién está dosificando", "err");
+    const id = crypto.randomUUID();
     await st.guardarVisitaLocal({
-      id: crypto.randomUUID(),
+      id,
       dia,
       inicio: new Date().toISOString(),
       of,
@@ -179,14 +184,15 @@ async function iniciar(of, esp, cliente, dia) {
     });
     await kv.set("ultimoResponsablePlanta", analista.value);
     h.cerrar();
-    location.hash = "#/pesos/visita";
+    location.hash = `#/pesos/visita/${id}`;
   });
 }
 
 // ---------------- toma de muestras ----------------
 
-async function pantallaVisita(vista) {
-  const v = await st.visitaActual();
+async function pantallaVisita(vista, id) {
+  const abiertas = await st.visitasEnCurso();
+  const v = (id && abiertas.find((x) => x.id === id)) || (!id && abiertas[0]) || null;
   if (!v) {
     location.hash = "#/pesos";
     return;
@@ -261,6 +267,12 @@ async function pantallaVisita(vista) {
   vista.append(
     el("section", { class: "rec-cab" }, [
       el("a", { href: `#/pesos/${v.dia}`, class: "volver" }, "← Control de pesos"),
+      abiertas.length > 1
+        ? el("div", { class: "otros-controles" }, [
+            el("span", {}, "Cambiar a:"),
+            ...abiertas.filter((x) => x.id !== v.id).map((x) => el("a", { href: `#/pesos/visita/${x.id}`, class: "btn btn-sec btn-mini" }, `${x.of.codigo} · parada ${x.parada || "—"} (${x.muestras.length})`)),
+          ])
+        : null,
       el("div", { class: "rec-titulo" }, [
         el("h1", {}, `${v.of.codigo} · Parada ${v.parada}`),
         el("span", {}, `${v.of.producto}${v.lote ? ` · Lote ${v.lote}` : ""} · inicio ${st.fmtHora(v.inicio)} · ${v.analista}`),
@@ -292,7 +304,7 @@ async function pantallaVisita(vista) {
             class: "btn btn-sec cancelar-rec",
             onclick: async () => {
               if (await confirmar("Descartar control", "Se borran las muestras tomadas en esta visita.", { si: "Descartar", peligro: true })) {
-                await st.descartarVisita();
+                await st.descartarVisita(v.id);
                 location.hash = `#/pesos/${v.dia}`;
               }
             },
@@ -373,7 +385,7 @@ async function pantallaControl(vista, id) {
   const esp = { nominal: c.PesoNominal, min: c.PesoMinimo ?? null, max: c.PesoMaximo ?? null, unidad: u };
   const muestras = st.muestrasDeTexto(c.Muestras, dia, esp);
   const r = st.resumenMuestras(muestras, esp);
-  const enCurso = await st.visitaActual();
+  const yaAbierto = await st.getVisita(c.Title);
   const fila = (k, v) => el("div", { class: "dato" }, [el("span", {}, k), el("b", {}, v || "—")]);
 
   // Control hecho sin rango y hoy el producto ya tiene rango configurado.
@@ -403,9 +415,9 @@ async function pantallaControl(vista, id) {
   };
 
   const seguir = async () => {
-    if (enCurso && enCurso.id !== c.Title) return toast("Hay otro control en curso: termínalo o descártalo primero", "err");
-    await st.reabrirControl(c);
-    location.hash = "#/pesos/visita";
+    // Si ya se estaba continuando en este equipo, se retoma tal cual (sin perder muestras nuevas).
+    if (!yaAbierto) await st.reabrirControl(c);
+    location.hash = `#/pesos/visita/${c.Title}`;
   };
 
   vista.append(

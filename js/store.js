@@ -1357,9 +1357,30 @@ export async function controlesDelDia(d) {
 
 // Visita en curso: se guarda en el dispositivo mientras se toman muestras
 // (si se cierra la app o se va la señal no se pierde nada).
-export const visitaActual = () => kv.get("pesos:visita");
-export const guardarVisitaLocal = (v) => kv.set("pesos:visita", v);
-export const descartarVisita = () => kv.del("pesos:visita");
+// Puede haber varios controles abiertos a la vez (ej. dos líneas dosificando):
+// se guardan por id en "pesos:visitas".
+async function mapaVisitas() {
+  const m = (await kv.get("pesos:visitas")) || {};
+  const vieja = await kv.get("pesos:visita"); // formato anterior: uno solo
+  if (vieja?.id) {
+    m[vieja.id] = vieja;
+    await kv.set("pesos:visitas", m);
+    await kv.del("pesos:visita");
+  }
+  return m;
+}
+export const visitasEnCurso = async () => Object.values(await mapaVisitas()).sort((a, b) => String(a.inicio).localeCompare(String(b.inicio)));
+export const getVisita = async (id) => (await mapaVisitas())[id] || null;
+export async function guardarVisitaLocal(v) {
+  const m = await mapaVisitas();
+  m[v.id] = v;
+  await kv.set("pesos:visitas", m);
+}
+export async function descartarVisita(id) {
+  const m = await mapaVisitas();
+  delete m[id];
+  await kv.set("pesos:visitas", m);
+}
 
 export function resumenMuestras(muestras, esp) {
   const pesos = muestras.map((m) => m.peso);
@@ -1407,7 +1428,7 @@ export async function finalizarVisita(v, { resultado, recomendaciones, estadoSel
   else await encolar({ tipo: "add", lista: "controlPesos", clave: [["Title", "eq", v.id]], campos, foto }, fotoBlob);
   await kv.set("pesos:ultimoEquipo", v.equipo || "");
   await kv.set(`pesos:sellado:${v.of.codigo}`, v.sellado || "");
-  await descartarVisita();
+  await descartarVisita(v.id);
   return campos;
 }
 
