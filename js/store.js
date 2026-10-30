@@ -1076,11 +1076,12 @@ export let errorConfig = null;
 
 export async function cargarConfig({ esperar = false } = {}) {
   const cache = await kv.get("cache:config");
-  const antes = usuario ? JSON.stringify(accesosDe(usuario.correo)) : null;
   // Primera vez en este equipo (sin copia): hay que esperar, porque de ahí
   // salen los accesos de las cuentas agregadas en Configuración.
   if (!cache) esperar = true;
   aplicarConfig(cache);
+  // Accesos con los que se va a pintar (los de la copia, no los de config.js).
+  const antes = usuario ? JSON.stringify(accesosDe(usuario.correo)) : null;
   const { carpeta, nombre } = CONFIG.archivoConfig;
   const descarga = api
     .leerTexto(`${carpeta}/${nombre}`)
@@ -1090,7 +1091,15 @@ export async function cargarConfig({ esperar = false } = {}) {
       aplicarConfig(cfg);
       errorConfig = null;
       // Se pintó con la copia vieja y a esta cuenta le cambiaron los accesos: recargar.
-      if (!esperar && usuario && antes !== JSON.stringify(accesosDe(usuario.correo))) location.reload();
+      // Una sola vez por minuto, por si algo no cuadra (nunca en bucle).
+      if (!esperar && usuario && antes !== JSON.stringify(accesosDe(usuario.correo))) {
+        let ultima = 0;
+        try { ultima = Number(sessionStorage.getItem("hub-recepcion:recargaAccesos")) || 0; } catch {}
+        if (Date.now() - ultima > 60000) {
+          try { sessionStorage.setItem("hub-recepcion:recargaAccesos", String(Date.now())); } catch {}
+          location.reload();
+        }
+      }
       return cfg;
     })
     .catch((e) => {
