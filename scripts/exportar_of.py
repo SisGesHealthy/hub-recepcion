@@ -70,7 +70,50 @@ def leer_ofs(x):
             "peso_kg": p.get("weight") or 0,
             "uom_producto": p["uom_id"][1] if p.get("uom_id") else "",
         })
-    return {"generado": dt.datetime.now(TZ).isoformat(timespec="seconds"), "desde": desde.isoformat(), "hasta": hasta.isoformat(), "ofs": out}
+    return {"generado": dt.datetime.now(TZ).isoformat(timespec="seconds"), "desde": desde.isoformat(), "hasta": hasta.isoformat(), "ofs": out, **leer_catalogo(x)}
+
+
+# Prefijos de productos con lista de materiales que NO se dosifican/venden
+# (reprocesos, mezclas intermedias, diluciones).
+PREFIJOS_FUERA = ("REP-", "MPI", "DILU", "S_")
+
+
+def leer_catalogo(x):
+    """Productos terminados (con lista de materiales) y clientes empresa, para
+    registrar en Control de pesos un control sin orden de fabricación."""
+    prods = x(
+        "product.product", "search_read",
+        [["bom_ids", "!=", False], ["active", "=", True]],
+        fields=["default_code", "name", "weight", "uom_id"],
+        order="default_code",
+    )
+    prods = [p for p in prods if p["default_code"] and not p["default_code"].upper().startswith(PREFIJOS_FUERA)]
+    # Clientes empresa que compraron cada producto en el último año (orientativo).
+    desde = (dt.datetime.now(TZ).date() - dt.timedelta(days=365)).isoformat()
+    lineas = x(
+        "sale.order.line", "search_read",
+        [["order_id.state", "in", ["sale", "done"]], ["order_id.date_order", ">=", desde], ["product_id", "in", [p["id"] for p in prods]]],
+        fields=["product_id", "order_partner_id"],
+    )
+    empresas = x("res.partner", "search_read", [["customer_rank", ">", 0], ["is_company", "=", True]], fields=["name"], order="name")
+    nombres = {e["id"]: e["name"] for e in empresas}
+    compra = {}
+    for l in lineas:
+        if l["product_id"] and l["order_partner_id"] and l["order_partner_id"][0] in nombres:
+            compra.setdefault(l["product_id"][0], set()).add(nombres[l["order_partner_id"][0]])
+    return {
+        "productos": [
+            {
+                "codigo": p["default_code"],
+                "producto": p["name"],
+                "peso_kg": p.get("weight") or 0,
+                "uom_producto": p["uom_id"][1] if p.get("uom_id") else "",
+                "clientes": sorted(compra.get(p["id"], [])),
+            }
+            for p in prods
+        ],
+        "clientes": [e["name"] for e in empresas],
+    }
 
 
 def cifrar(datos: dict, clave_b64: str) -> dict:
@@ -93,7 +136,7 @@ def main():
     os.makedirs(os.path.dirname(SALIDA), exist_ok=True)
     with open(SALIDA, "w", encoding="utf-8") as f:
         json.dump(sobre, f)
-    print(f"{len(datos['ofs'])} OF ({datos['desde']} a {datos['hasta']}) -> {os.path.normpath(SALIDA)}")
+    print(f"{len(datos['ofs'])} OF ({datos['desde']} a {datos['hasta']}), {len(datos['productos'])} productos, {len(datos['clientes'])} clientes -> {os.path.normpath(SALIDA)}")
 
 
 if __name__ == "__main__":

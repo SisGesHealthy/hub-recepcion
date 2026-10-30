@@ -189,6 +189,13 @@ export function ofsDemo() {
       { of: "SEM/MO/01796", id: 5, fecha: dia(0), codigo: "SALS009", producto: "SALSA DE ARANDANO", cantidad: 300, unidad: "kg", estado: "Confirmada", lote_odoo: "", peso_kg: 1, uom_producto: "kg" },
       { of: "SEM/MO/01793", id: 4, fecha: dia(1), codigo: "PTEC014", producto: "PULPA DE MORA 150 g", cantidad: 5000, unidad: "Units", estado: "Confirmada", lote_odoo: "" },
     ],
+    productos: [
+      { codigo: "PTEC002", producto: "PULPA DE GUANABANA GOYA USA UNIDAD 397 g", peso_kg: 0.397, uom_producto: "Units", clientes: [] },
+      { codigo: "PTEC021", producto: "TOMATE DE ARBOL ENTERO MERICA UNIDAD 500 g", peso_kg: 0.5, uom_producto: "Units", clientes: [] },
+      { codigo: "PULP001", producto: "COCO RALLADO 20 KG", peso_kg: 1, uom_producto: "kg", clientes: ["UNILEVER ANDINA ECUADOR S.A."] },
+      { codigo: "SALS009", producto: "SALSA DE ARANDANO", peso_kg: 1, uom_producto: "kg", clientes: ["KAARUFOOD CIA LTDA", "REYLACTEOS C.L."] },
+    ],
+    clientes: ["KAARUFOOD CIA LTDA", "PROBA LLC", "REYLACTEOS C.L.", "UNILEVER ANDINA ECUADOR S.A."],
   };
 }
 

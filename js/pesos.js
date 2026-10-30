@@ -44,6 +44,7 @@ async function pantallaDia(vista, dia) {
         el("input", { type: "date", class: "dias", value: dia, onchange: (e) => e.target.value && ir(e.target.value) }),
         el("button", { class: "btn btn-sec", onclick: () => ir(st.sumarDias(dia, 1)) }, "›"),
         dia !== st.hoyISO() ? el("button", { class: "btn btn-sec", onclick: () => ir(st.hoyISO()) }, "Hoy") : null,
+        el("button", { class: "btn btn-azul", onclick: () => controlManual(dia) }, "+ Control sin orden"),
         esAdmin() ? el("a", { class: "btn btn-sec", href: "#/pesos/parametros" }, "⚙ Parámetros de peso") : null,
       ]),
     ]),
@@ -120,6 +121,81 @@ async function pantallaDia(vista, dia) {
       ])
     );
   }
+}
+
+// ---------------- control sin orden de fabricación ----------------
+// Para lo que se dosifica sin OF en Odoo (o aún no creada): cliente y producto
+// salen del catálogo de Odoo (productos terminados con lista de materiales).
+async function controlManual(dia) {
+  const [datos, params, cat] = await Promise.all([st.cargarOF(), st.parametrosPeso(), st.catalogo()]);
+  const productos = datos.productos || [];
+  if (!productos.length) return toast("Aún no llega el catálogo de productos de Odoo (se actualiza cada hora). Intenta más tarde.", "err");
+  // Cliente por producto: el del catálogo de liberación y los que lo compraron en Odoo.
+  const clienteCat = (codigo) => cat.find((c) => (c.Title || "").trim().toUpperCase() === codigo.toUpperCase())?.field_2 || "";
+  const clientesDe = (p) => [...new Set([clienteCat(p.codigo), ...(p.clientes || [])].filter(Boolean))];
+  const clientes = [...new Set([...(datos.clientes || []), ...productos.flatMap(clientesDe)])].sort((a, b) => a.localeCompare(b));
+
+  const cliente = el("select", {}, [el("option", { value: "" }, "— Todos los clientes —"), ...clientes.map((c) => el("option", { value: c }, c))]);
+  const todos = el("input", { type: "checkbox" });
+  const lista = el("datalist", { id: "dl-prod-manual" });
+  const prod = el("input", { type: "text", list: "dl-prod-manual", placeholder: "Escribe código o nombre…", autocomplete: "off" });
+  const ref = el("input", { type: "text", placeholder: "Opcional: n.º de orden o referencia" });
+  const info = el("p", { class: "nota" });
+  const visibles = () => {
+    const c = cliente.value;
+    const suyos = c ? productos.filter((p) => clientesDe(p).includes(c)) : productos;
+    return c && !todos.checked && suyos.length ? suyos : productos;
+  };
+  const pintarLista = () => {
+    clear(lista);
+    const v = visibles();
+    v.forEach((p) => lista.appendChild(el("option", { value: `${p.codigo} · ${p.producto}` })));
+    info.textContent = cliente.value && !todos.checked && v.length < productos.length ? `${v.length} productos de ${cliente.value} (marca «ver todos» si no aparece).` : `${v.length} productos.`;
+  };
+  const elegido = () => {
+    const cod = prod.value.split("·")[0].trim().toUpperCase();
+    return productos.find((p) => p.codigo.toUpperCase() === cod) || null;
+  };
+  cliente.addEventListener("change", () => ((prod.value = ""), pintarLista()));
+  todos.addEventListener("change", pintarLista);
+  prod.addEventListener("change", () => {
+    const p = elegido();
+    if (p && !cliente.value) {
+      const cs = clientesDe(p);
+      if (cs.length === 1) cliente.value = cs[0];
+    }
+  });
+  pintarLista();
+
+  const btn = el("button", { class: "btn btn-verde btn-xl" }, "Continuar");
+  const campo = (l, x) => el("label", { class: "campo" }, [el("span", { class: "campo-label" }, l), x]);
+  const h = hoja("Control sin orden de Odoo", [
+    el("p", { class: "sub" }, "Para un producto que se está dosificando y no tiene orden de fabricación en Odoo."),
+    campo("Cliente", cliente),
+    campo("Producto", el("div", {}, [prod, lista])),
+    el("label", { class: "check-linea" }, [todos, " Ver todos los productos"]),
+    info,
+    campo("Orden / referencia", ref),
+    btn,
+  ]);
+  setTimeout(() => prod.focus(), 250);
+  btn.addEventListener("click", () => {
+    const p = elegido();
+    if (!p) return toast("Elige un producto de la lista", "err");
+    const of = {
+      of: ref.value.trim() || `SIN OF · ${p.codigo}`,
+      codigo: p.codigo,
+      producto: p.producto,
+      fecha: dia,
+      estado: "sin orden",
+      peso_kg: p.peso_kg,
+      uom_producto: p.uom_producto,
+      cantidad: null,
+      unidad: "",
+    };
+    h.cerrar();
+    iniciar(of, st.especPeso(of, params), cliente.value || clientesDe(p)[0] || "", dia);
+  });
 }
 
 // ---------------- inicio de la visita ----------------
