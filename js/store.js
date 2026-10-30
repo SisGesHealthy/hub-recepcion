@@ -1071,8 +1071,12 @@ function aplicarConfig(cfg) {
 // copia guardada y la versión actual se descarga en segundo plano (con mala
 // señal, esperar el archivo dejaba la pantalla en blanco hasta 20 s).
 // La pantalla de Configuración sí espera ({ esperar: true }).
+// Error al leer configuracion.json (ej. 403: la cuenta no tiene permiso en el sitio).
+export let errorConfig = null;
+
 export async function cargarConfig({ esperar = false } = {}) {
   const cache = await kv.get("cache:config");
+  const antes = usuario ? JSON.stringify(accesosDe(usuario.correo)) : null;
   // Primera vez en este equipo (sin copia): hay que esperar, porque de ahí
   // salen los accesos de las cuentas agregadas en Configuración.
   if (!cache) esperar = true;
@@ -1084,10 +1088,14 @@ export async function cargarConfig({ esperar = false } = {}) {
       const cfg = JSON.parse(txt);
       await kv.set("cache:config", cfg);
       aplicarConfig(cfg);
+      errorConfig = null;
+      // Se pintó con la copia vieja y a esta cuenta le cambiaron los accesos: recargar.
+      if (!esperar && usuario && antes !== JSON.stringify(accesosDe(usuario.correo))) location.reload();
       return cfg;
     })
     .catch((e) => {
       console.warn("configuracion.json:", e.message);
+      errorConfig = e;
       return cache;
     });
   return esperar ? descarga : cache;

@@ -3,6 +3,7 @@
 import { CONFIG } from "./config.js";
 import { el, clear } from "./dom.js";
 import { initStore, setUsuario, getUsuario, onSync, sincronizar, descartarPrimeraOperacion, cargarConfig } from "./store.js";
+import * as store from "./store.js";
 import { confirmar } from "./ui.js";
 import { iconoBalanza } from "./pesos.js";
 import { iconoTermometro } from "./temperaturas.js";
@@ -163,7 +164,9 @@ function sinAcceso(u) {
   vista.appendChild(
     el("div", { class: "vacio" }, [
       el("h2", {}, "Sin acceso"),
-      el("p", {}, `La cuenta ${u.correo} no tiene asignado este departamento. Pide a Sistemas que te dé acceso en Configuración → Cuentas con acceso.`),
+      store.errorConfig
+        ? el("p", {}, `La cuenta ${u.correo} no pudo leer la configuración en SharePoint${store.errorConfig.status ? ` (error ${store.errorConfig.status})` : ""}. Lo más probable es que no tenga permiso en el sitio EspacioColaborativo: pide a Sistemas que la agregue (miembros del sitio) y vuelve a abrir la app.`)
+        : el("p", {}, `La cuenta ${u.correo} no tiene asignado este departamento. Pide a Sistemas que te dé acceso en Configuración → Cuentas con acceso.`),
     ])
   );
 }
