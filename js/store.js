@@ -781,16 +781,21 @@ export async function cargarOF() {
       if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
       return r.json();
     };
-    const sobre = await leer(CONFIG.of.datosDirecto).catch(() => leer(CONFIG.of.datos));
+    // Se leen las dos copias (repositorio directo y Pages) y se usa la más
+    // reciente: cada una tiene su propia caché (raw ~5 min, Pages ~10 min) y
+    // cualquiera de las dos puede ir atrasada.
+    const sobres = (await Promise.allSettled([leer(CONFIG.of.datosDirecto), leer(CONFIG.of.datos)])).filter((r) => r.status === "fulfilled").map((r) => r.value);
+    if (!sobres.length) throw new Error("No se pudo descargar el archivo de órdenes");
     let clave = await kv.get("of:clave");
+    const abrir = async (k) => (await Promise.all(sobres.map((sb) => descifrar(sb, k)))).sort((a, b) => String(b.generado).localeCompare(String(a.generado)))[0];
     let datos;
     try {
       if (!clave) throw new Error("sin clave");
-      datos = await descifrar(sobre, clave);
+      datos = await abrir(clave);
     } catch {
       // Clave nueva o aún no descargada: se pide a SharePoint (solo con sesión).
       clave = await api.leerTexto(CONFIG.of.clave);
-      datos = await descifrar(sobre, clave);
+      datos = await abrir(clave);
       await kv.set("of:clave", clave);
     }
     await kv.set("cache:of", datos);
