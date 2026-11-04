@@ -507,9 +507,15 @@ async function pantallaControl(vista, id) {
       ]),
     ]),
     el("article", { class: "resumen-doc" }, [
-      el("header", { class: "doc-cab" }, [
+      // Encabezado del formato aprobado: logo · título · código / versión / fecha.
+      el("header", { class: "doc-cab doc-cab-formato" }, [
         el("img", { src: "icons/logo.png", alt: "Healthy Food" }),
-        el("div", {}, [el("h1", {}, "Registro de control de pesos"), el("span", {}, `${c.OrdenFabricacion} · ${st.fmtDia(dia)} · ${st.fmtHora(c.HoraInicio)}–${st.fmtHora(c.HoraFin)}`)]),
+        el("div", { class: "doc-cab-titulo" }, [el("h1", {}, "Registro de control de pesos"), el("span", {}, `${c.OrdenFabricacion} · ${st.fmtDia(dia)} · ${st.fmtHora(c.HoraInicio)}–${st.fmtHora(c.HoraFin)}`)]),
+        el("div", { class: "doc-formato" }, [
+          el("b", {}, CONFIG.formatos.controlPesos.codigo),
+          el("span", {}, `Versión ${CONFIG.formatos.controlPesos.version}`),
+          el("span", {}, CONFIG.formatos.controlPesos.fecha),
+        ]),
       ]),
       el("section", { class: "doc-sec" }, [
         el("h2", {}, "Datos"),

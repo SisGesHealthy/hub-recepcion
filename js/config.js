@@ -51,6 +51,11 @@ export const CONFIG = {
   administrador: "sistemasdegestion@healthyfood.com.ec",
   // Valor inicial; la lista vigente se edita en la app (Configuración →
   // Cuentas con acceso) y se guarda en configuracion.json.
+  // Códigos de formato aprobados por el Sistema de Gestión (encabezado al imprimir).
+  formatos: {
+    controlPesos: { codigo: "M.ASC.02R06", version: "0", fecha: "13/1/2025" },
+  },
+
   // Hub Averías (otra app, integrada en el módulo "averias").
   averias: { url: "https://hub-averias.mttohealthy.workers.dev/" },
 

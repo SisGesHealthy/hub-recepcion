@@ -225,6 +225,10 @@ body.modo-averias .vista { padding: 0; max-width: none; }
 .doc-cab img { height: 54px; }
 .doc-cab h1 { margin: 0; font-size: 22px; }
 .doc-cab span { color: var(--dim); }
+.doc-cab-formato .doc-cab-titulo { flex: 1; }
+.doc-formato { display: flex; flex-direction: column; align-items: stretch; min-width: 120px; border: 1.5px solid var(--ink); text-align: center; font-size: 12px; }
+.doc-formato > * { padding: 3px 8px; color: var(--ink) !important; }
+.doc-formato > * + * { border-top: 1.5px solid var(--ink); }
 .doc-sec { margin-top: 18px; }
 .doc-sec h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .05em; color: var(--brand-700); margin: 0 0 8px; }
 .datos { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 18px; }
