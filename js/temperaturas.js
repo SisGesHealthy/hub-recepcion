@@ -73,7 +73,7 @@ async function pantallaTurno(vista, dia, turno, abierto) {
     const n = conts.filter((c) => m.has(c.id)).length;
     const fuera = conts.filter((c) => m.get(c.id)?.Estado && m.get(c.id).Estado !== "OK").length;
     clear(progreso);
-    poner(progreso, 
+    poner(progreso,
       el("b", {}, `${n} de ${conts.length} registrados`),
       fuera ? el("span", { class: "estado estado-rojo" }, `${fuera} fuera de rango`) : n === conts.length ? el("span", { class: "estado estado-verde" }, "Turno completo ✓") : null
     );
@@ -115,7 +115,7 @@ async function pantallaTurno(vista, dia, turno, abierto) {
       if (r && !card.dataset.editando) {
         const fuera = r.Estado && r.Estado !== "OK";
         card.classList.add(fuera ? "fuera" : "ok");
-        poner(card, 
+        poner(card,
           el("div", { class: "temp-hecho" }, [
             el("div", { class: "temp-valor" }, fmtT(r.Temperatura)),
             el("div", { class: "temp-info" }, [
@@ -259,10 +259,14 @@ async function historial(vista, hasta) {
   hasta = /^\d{4}-\d{2}-\d{2}$/.test(hasta || "") ? hasta : st.hoyISO();
   const dias = el("select", { class: "dias" }, [["1", "Ese día"], ["7", "7 días"], ["14", "14 días"], ["30", "30 días"]].map(([v, t]) => el("option", { value: v, ...(v === "7" ? { selected: "" } : {}) }, t)));
   const cont = el("div", { class: "reporte-wrap" }, el("div", { class: "cargando" }, "Cargando…"));
+  const modo = el("select", { class: "dias", title: "Vista" }, [["tabla", "Tabla"], ["grafica", "Gráfica"]].map(([v, t]) => el("option", { value: v }, t)));
+  try {
+    modo.value = localStorage.getItem("hub-recepcion:tempVista") || "tabla";
+  } catch {}
   vista.append(
     el("div", { class: "cab" }, [
       el("div", {}, [el("a", { href: "#/temp", class: "volver" }, "← Registrar"), el("h1", { class: "titulo" }, "Historial de temperaturas"), el("p", { class: "sub" }, `Hasta el ${st.fmtDia(hasta)}`)]),
-      el("div", { class: "cab-botones" }, [dias, el("button", { class: "btn btn-azul", onclick: () => window.print() }, "🖨 Imprimir")]),
+      el("div", { class: "cab-botones" }, [modo, dias, el("button", { class: "btn btn-azul", onclick: () => window.print() }, "🖨 Imprimir")]),
     ]),
     cont
   );
@@ -296,9 +300,10 @@ async function historial(vista, hasta) {
     ]);
     const faltan = conts.filter((c) => c.activo !== false).length * fechas.length * CONFIG.turnosTemperatura.length - rows.length;
     const fuera = rows.filter((r) => r.Estado && r.Estado !== "OK");
-    poner(cont, 
-      el("p", { class: "nota pad" }, `${rows.length} lecturas · ${fuera.length} fuera de rango · ${Math.max(0, faltan)} sin registrar (·). Pasa el dedo o el mouse sobre una celda roja para ver la observación.`),
-      tabla,
+    const grafica = modo.value === "grafica";
+    poner(cont,
+      el("p", { class: "nota pad" }, `${rows.length} lecturas · ${fuera.length} fuera de rango · ${Math.max(0, faltan)} sin registrar${grafica ? "" : " (·)"}. ${grafica ? "La franja verde es el rango del contenedor; los puntos rojos están fuera. Toca un punto para ver el detalle." : "Pasa el dedo o el mouse sobre una celda roja para ver la observación."}`),
+      grafica ? graficas(conts.filter((c) => c.activo !== false || rows.some((r) => r.ContenedorId === c.id)), [...fechas].reverse(), mapa) : tabla,
       fuera.length
         ? el("div", { class: "pad" }, [
             el("h2", {}, "Lecturas fuera de rango"),
@@ -308,6 +313,12 @@ async function historial(vista, hasta) {
     );
   }
   dias.addEventListener("change", cargar);
+  modo.addEventListener("change", () => {
+    try {
+      localStorage.setItem("hub-recepcion:tempVista", modo.value);
+    } catch {}
+    cargar();
+  });
   cargar();
 }
 
@@ -366,6 +377,85 @@ function rueda(textos, inicial, onCambio, clase = "") {
   }, { passive: false });
   marcar();
   return { nodo: el("div", { class: `rueda ${clase}` }, sc), ir };
+}
+
+// ---------------- gráfica: una por contenedor ----------------
+// Línea de lecturas en orden de turno (más antiguo a la izquierda), franja del
+// rango permitido y puntos rojos fuera de rango. Huecos donde no se registró.
+const SVGNS = "http://www.w3.org/2000/svg";
+const sv = (tag, attrs = {}, txt) => {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (txt !== undefined) n.textContent = txt;
+  return n;
+};
+const fmtN = (x) => String(Math.round(x * 10) / 10).replace(".", ",").replace("-", "−");
+
+function graficas(conts, fechas, mapa) {
+  const slots = fechas.flatMap((f) => CONFIG.turnosTemperatura.map((t, i) => ({ f, t, primero: i === 0 })));
+  const tip = el("div", { class: "graf-tip", role: "status" });
+  const ocultar = () => tip.classList.remove("ver");
+  const mostrar = (ev, txt) => {
+    tip.textContent = txt;
+    tip.classList.add("ver");
+    const caja = tip.parentElement.getBoundingClientRect();
+    const x = (ev.clientX ?? ev.touches?.[0]?.clientX) - caja.left;
+    const y = (ev.clientY ?? ev.touches?.[0]?.clientY) - caja.top;
+    tip.style.left = `${Math.min(Math.max(x, 90), caja.width - 90)}px`;
+    tip.style.top = `${y - 12}px`;
+  };
+  const panel = (c) => {
+    const W = 560, H = 190, L = 44, R = 12, T = 12, B = 30;
+    const pts = slots.map((s, i) => ({ ...s, i, r: mapa.get(st.claveTemp(s.f, s.t, c.id)) }));
+    const vals = pts.filter((p) => p.r).map((p) => p.r.Temperatura);
+    const lo = Math.floor(Math.min(...vals, c.min ?? Infinity, c.max ?? Infinity) - 2);
+    const hi = Math.ceil(Math.max(...vals, c.max ?? -Infinity, c.min ?? -Infinity) + 2);
+    const X = (i) => L + (slots.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (slots.length - 1));
+    const Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo || 1);
+    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "graf-svg", role: "img", "aria-label": `${c.nombre}: ${vals.length} lecturas` });
+    // franja del rango
+    if (c.min != null && c.max != null) {
+      svg.append(sv("rect", { x: L, y: Y(c.max), width: W - L - R, height: Y(c.min) - Y(c.max), class: "graf-banda" }));
+      for (const v of [c.min, c.max]) {
+        svg.append(sv("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), class: "graf-lim" }));
+        svg.append(sv("text", { x: L - 6, y: Y(v) + 4, class: "graf-eje", "text-anchor": "end" }, fmtN(v)));
+      }
+    }
+    // separadores de día y etiquetas
+    for (const p of pts.filter((p) => p.primero)) {
+      if (p.i > 0) svg.append(sv("line", { x1: X(p.i) - (X(1) - X(0)) / 2, x2: X(p.i) - (X(1) - X(0)) / 2, y1: T, y2: H - B, class: "graf-dia" }));
+      svg.append(sv("text", { x: X(p.i), y: H - 10, class: "graf-eje", "text-anchor": slots.length > 1 ? "start" : "middle" }, st.fmtDia(p.f).slice(0, 5)));
+    }
+    // línea (se corta donde falta una lectura)
+    let d = "", seguido = false;
+    for (const p of pts) {
+      if (!p.r) {
+        seguido = false;
+        continue;
+      }
+      d += `${seguido ? "L" : "M"}${X(p.i).toFixed(1)},${Y(p.r.Temperatura).toFixed(1)}`;
+      seguido = true;
+    }
+    svg.append(sv("path", { d, class: "graf-linea" }));
+    for (const p of pts.filter((p) => p.r)) {
+      const fuera = p.r.Estado && p.r.Estado !== "OK";
+      const txt = `${st.fmtDia(p.f).slice(0, 5)} ${p.t} · ${fmtN(p.r.Temperatura)} °C · ${fuera ? (p.r.Estado === "Alto" ? "⚠ sobre el rango" : "⚠ bajo el rango") : "dentro de rango"}${p.r.Bodeguero ? ` · ${p.r.Bodeguero}` : ""}${p.r.Observaciones ? ` · ${p.r.Observaciones}` : ""}`;
+      svg.append(sv("circle", { cx: X(p.i), cy: Y(p.r.Temperatura), r: fuera ? 5 : 4, class: fuera ? "graf-pto fuera" : "graf-pto" }));
+      const hit = sv("circle", { cx: X(p.i), cy: Y(p.r.Temperatura), r: 14, class: "graf-hit" });
+      hit.addEventListener("pointerenter", (ev) => mostrar(ev, txt));
+      hit.addEventListener("pointerdown", (ev) => mostrar(ev, txt));
+      hit.addEventListener("pointerleave", ocultar);
+      svg.append(hit);
+    }
+    const nFuera = pts.filter((p) => p.r?.Estado && p.r.Estado !== "OK").length;
+    return el("figure", { class: "graf-panel" }, [
+      el("figcaption", {}, [el("b", {}, c.nombre), el("small", {}, ` rango ${c.min ?? "—"} a ${c.max ?? "—"} °C · ${vals.length} lecturas${nFuera ? ` · ${nFuera} fuera` : ""}`)]),
+      vals.length ? svg : el("p", { class: "nota" }, "Sin lecturas en el período."),
+    ]);
+  };
+  const grid = el("div", { class: "graf-grid" }, [...conts.map(panel), tip]);
+  grid.addEventListener("pointerleave", ocultar);
+  return grid;
 }
 
 // Ícono de termómetro (SVG propio, toma el color del texto).

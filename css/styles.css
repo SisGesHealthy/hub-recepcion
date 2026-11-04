@@ -434,6 +434,22 @@ a.control-fila { color: inherit; text-decoration: none; }
 
 /* temperaturas: turno fijo y foto obligatoria */
 .turno.bloqueado { opacity: .55; cursor: not-allowed; }
+/* Temperaturas: gráficas por contenedor */
+.graf-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 12px; padding: 4px 12px 16px; }
+.graf-panel { margin: 0; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px 4px; break-inside: avoid; }
+.graf-panel figcaption small { color: var(--dim); }
+.graf-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.graf-banda { fill: var(--ok-bg); }
+.graf-lim { stroke: var(--verde); stroke-width: 1; stroke-dasharray: 4 4; opacity: .6; }
+.graf-dia { stroke: var(--border); stroke-width: 1; }
+.graf-eje { fill: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.graf-linea { fill: none; stroke: var(--azul); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.graf-pto { fill: var(--azul); stroke: var(--card); stroke-width: 2; }
+.graf-pto.fuera { fill: var(--rojo); }
+.graf-hit { fill: transparent; cursor: pointer; }
+.graf-tip { position: absolute; transform: translate(-50%, -100%); max-width: 260px; background: var(--ink); color: var(--card); font-size: 12px; line-height: 1.35; padding: 6px 9px; border-radius: 8px; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 5; }
+.graf-tip.ver { opacity: 1; }
+@media print { .graf-grid { grid-template-columns: 1fr 1fr; } .graf-tip { display: none; } }
 .check-linea { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--dim); margin: 4px 0; }
 .en-curso { display: flex; flex-direction: column; gap: 6px; }
 .en-curso-fila { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
