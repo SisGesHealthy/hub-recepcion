@@ -115,6 +115,12 @@ async function ejecutar(op) {
 
 let corriendo = null;
 let repetir = false;
+// Grupos independientes de la cola: un registro que falla solo detiene a los
+// de su grupo (el orden importa dentro de una recepción), no a los demás.
+// Ej. una temperatura con error ya no deja trabados los pallets.
+const GRUPO = { temperaturas: "Temperaturas", controlPesos: "Control de pesos", parametrosPeso: "Control de pesos", lotes: "Calidad - Planta", registros: "Calidad - Planta" };
+const grupoDe = (op) => GRUPO[op.lista] || "Recepción y liberación";
+
 export function sincronizar() {
   if (corriendo) {
     // Lo encolado mientras se sube se procesa al terminar esta vuelta.
@@ -124,21 +130,24 @@ export function sincronizar() {
   corriendo = (async () => {
     if (!navigator.onLine && !CONFIG.useMock) return;
     const ops = (await idb.getAll("outbox")).sort((a, b) => a.seq - b.seq);
-    if (!ops.length) return refrescarEstadoSync({ error: null });
+    if (!ops.length) return refrescarEstadoSync({ error: null, fallas: [] });
     await refrescarEstadoSync({ sincronizando: true });
+    const trabados = new Map(); // grupo → { seq, error }
     for (const op of ops) {
+      const g = grupoDe(op);
+      if (trabados.has(g)) continue;
       try {
         await ejecutar(op);
         await idb.delete("outbox", op.seq);
-        await refrescarEstadoSync({ error: null });
       } catch (e) {
-        // Se detiene para no subir algo fuera de orden (ej. un pallet antes
-        // que su recepción). Reintenta en el próximo ciclo.
-        console.warn("Sync detenido:", e);
-        await refrescarEstadoSync({ error: e.message || String(e) });
-        break;
+        // Se detiene ESE grupo para no subir algo fuera de orden (ej. un pallet
+        // antes que su recepción). Reintenta en el próximo ciclo.
+        console.warn("Sync detenido:", g, op, e);
+        trabados.set(g, { seq: op.seq, lista: op.lista, error: e.message || String(e) });
       }
     }
+    const fallas = [...trabados.entries()].map(([grupo, x]) => ({ grupo, ...x }));
+    await refrescarEstadoSync({ fallas, error: fallas.length ? fallas.map((f) => `${f.grupo}: ${f.error}`).join("\n\n") : null });
   })().finally(async () => {
     corriendo = null;
     await refrescarEstadoSync({ sincronizando: false });
@@ -151,10 +160,13 @@ export function sincronizar() {
   return corriendo;
 }
 
+// Descarta el registro que está trabando la cola (el primero que falló).
 export async function descartarPrimeraOperacion() {
+  const seq = estadoSync.fallas?.[0]?.seq;
   const ops = (await idb.getAll("outbox")).sort((a, b) => a.seq - b.seq);
-  if (ops[0]) await idb.delete("outbox", ops[0].seq);
-  await refrescarEstadoSync({ error: null });
+  const op = ops.find((o) => o.seq === seq) || ops[0];
+  if (op) await idb.delete("outbox", op.seq);
+  await refrescarEstadoSync({ error: null, fallas: [] });
   sincronizar();
 }
 
