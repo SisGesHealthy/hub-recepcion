@@ -90,6 +90,26 @@ async function buscarUno(lista, where) {
   return r[0] || null;
 }
 
+// Cierre (o vuelta a "Finalizada") de una recepción cuya fila "En Proceso" ya
+// no existe porque en SharePoint ya quedó Finalizada con sus totales (ej. se
+// cerró dos veces, o desde otro equipo): el objetivo ya se cumplió, se omite.
+async function yaCerrada(op) {
+  if (op.lista !== "recepciones" || op.tipo !== "updateWhere") return false;
+  const quiere = op.camposFinales?.Estado || op.campos?.Estado;
+  const idn = op.where?.find((w) => w[0] === "ID_1")?.[2];
+  if (quiere !== "Finalizada" || !idn) return false;
+  const desde = new Date((op.creado || Date.now()) - 2 * 86400000);
+  const r = await buscarUno("recepciones", [["ID_1", "eq", idn], ["Estado", "eq", "Finalizada"], ["HoraLlegada", "ge", desde]]);
+  return !!(r && r.TotalNeto != null);
+}
+
+// Texto corto del registro que falla (para el aviso y para soporte).
+function detalleOp(op) {
+  const donde = op.tipo === "update" ? `ID ${op.id ?? "—"}` : (op.where || op.clave || []).map((w) => `${w[0]}=${w[2]}`).join(" · ");
+  const cuando = op.creado ? new Date(op.creado).toLocaleString("es-EC", { timeZone: TZ, dateStyle: "short", timeStyle: "short" }) : "";
+  return `${op.tipo} ${op.lista}${donde ? ` (${donde})` : ""}${cuando ? ` · registrado ${cuando}` : ""}`;
+}
+
 async function ejecutar(op) {
   const blob = op.blobId ? (await idb.get("blobs", op.blobId))?.blob : null;
   if (op.tipo === "add") {
@@ -99,6 +119,7 @@ async function ejecutar(op) {
     if (op.camposFinales) await api.update(op.lista, item.ID, op.camposFinales);
   } else if (op.tipo === "update" || op.tipo === "updateWhere") {
     const id = op.tipo === "update" ? op.id : (await buscarUno(op.lista, op.where))?.ID;
+    if (!id && (await yaCerrada(op))) return console.info("Ya estaba cerrada en SharePoint, se omite:", op);
     if (!id) throw Object.assign(new Error(`No se encontró en ${op.lista} el registro a actualizar.`), { status: 404 });
     // Imagen primero y luego UNA sola escritura con todos los campos: cada
     // escritura dispara un aviso al flujo de Power Automate, y varias seguidas
@@ -143,7 +164,7 @@ export function sincronizar() {
         // Se detiene ESE grupo para no subir algo fuera de orden (ej. un pallet
         // antes que su recepción). Reintenta en el próximo ciclo.
         console.warn("Sync detenido:", g, op, e);
-        trabados.set(g, { seq: op.seq, lista: op.lista, error: e.message || String(e) });
+        trabados.set(g, { seq: op.seq, lista: op.lista, error: `${e.message || String(e)}\n[${detalleOp(op)}]` });
       }
     }
     const fallas = [...trabados.entries()].map(([grupo, x]) => ({ grupo, ...x }));
