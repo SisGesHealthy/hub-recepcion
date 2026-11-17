@@ -25,6 +25,13 @@ const DEMO_USUARIOS = [
   ["Sistemas de Gestion HF", "sistemasdegestion@healthyfood.com.ec"],
 ];
 
+// Enlace directo (QR, acceso del ícono): si hay que pasar por el inicio de
+// sesión de Microsoft, la página de destino se recuerda y se abre al volver.
+const K_DESTINO = "hub-recepcion:destino";
+try {
+  if (location.hash.startsWith("#/") && location.hash.length > 2) sessionStorage.setItem(K_DESTINO, location.hash);
+} catch {}
+
 async function main() {
   if (CONFIG.useMock) {
     const guardado = localStorage.getItem("hub-recepcion:demoUser") || DEMO_USUARIOS[0][1];
@@ -44,6 +51,11 @@ async function main() {
   await initStore();
   await cargarConfig();
   pintarBarra();
+  try {
+    const destino = sessionStorage.getItem(K_DESTINO);
+    sessionStorage.removeItem(K_DESTINO);
+    if (destino && location.hash !== destino) history.replaceState(null, "", destino);
+  } catch {}
   window.addEventListener("hashchange", rutear);
   rutear();
   if ("serviceWorker" in navigator && !CONFIG.useMock) navigator.serviceWorker.register("sw.js").catch(() => {});

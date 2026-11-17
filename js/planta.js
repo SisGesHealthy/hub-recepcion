@@ -17,6 +17,7 @@ export async function render(vista, resto) {
   if (resto[0] === "lote" && resto[1]) return pantallaLote(vista, Number(resto[1]), prodDe);
   if (resto[0] === "reporte") return (await import("./reporte.js")).render(vista);
   if (resto[0] === "micro") return pantallaMicroPendiente(vista);
+  if (resto[0] === "qr") return (await import("./accesos.js")).render(vista);
   const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
   return pantallaDia(vista, dia, cat);
 }
@@ -74,6 +75,7 @@ async function pantallaDia(vista, dia, cat) {
         el("button", { class: "btn btn-sec", title: "Actualizar", onclick: () => cargar() }, "↻"),
         el("a", { class: "btn btn-sec", href: "#/planta/micro" }, "🧫 Micro pendiente"),
         el("a", { class: "btn btn-sec", href: "#/planta/reporte" }, "📊 Reporte"),
+        el("a", { class: "btn btn-sec", href: "#/planta/qr", title: "Códigos QR de acceso directo" }, "▦ QR"),
       ]),
     ]),
     lista
