@@ -79,7 +79,11 @@ function tarjetaOrden(o, local, enServidor, liberada) {
     // Punto de control: sin registro del análisis no se recibe.
     accion = el("span", { class: "estado estado-ambar", title: "La orden dice Liberado pero no hay registro de °Brix/pH/acidez en Liberaciones" }, "Falta registrar el análisis de Calidad");
   } else if (cal === "Rechazado") {
-    accion = el("span", { class: "estado estado-rojo" }, "Rechazada por Calidad");
+    // Calidad rechaza la carga completa; Bodega puede aceptar solo la fruta conforme.
+    accion = el("div", { class: "acc-rech" }, [
+      el("span", { class: "estado estado-rojo" }, "Rechazada por Calidad"),
+      el("button", { class: "btn btn-ambar", onclick: (e) => iniciar(o, e.currentTarget, { parcial: true }) }, "Recibir solo lo conforme"),
+    ]);
   } else {
     accion = el("span", { class: "estado estado-ambar" }, "Esperando liberación de Calidad");
   }
@@ -94,13 +98,15 @@ function tarjetaOrden(o, local, enServidor, liberada) {
   ]);
 }
 
-async function iniciar(orden, btn) {
+async function iniciar(orden, btn, { parcial = false } = {}) {
+  const texto = btn.textContent;
+  if (parcial && !(await confirmar("Carga rechazada por Calidad", "Calidad rechazó esta carga. Registra SOLO los pallets de fruta conforme que se aceptan; el resto se devuelve al proveedor.", { si: "Recibir lo conforme" }))) return;
   btn.disabled = true;
   btn.textContent = "Abriendo…";
-  if (!(await st.tieneLiberacion(orden))) {
+  if (!(parcial ? await st.tieneRechazo(orden) : await st.tieneLiberacion(orden))) {
     toast("Falta registrar el análisis de Calidad: no se puede recibir", "err");
     btn.disabled = false;
-    btn.textContent = "Iniciar recepción";
+    btn.textContent = texto;
     return;
   }
   const previa = await st.recepcionPrevia(orden);
@@ -109,7 +115,7 @@ async function iniciar(orden, btn) {
     elegida = await elegirPrevia(previa);
     if (!elegida) {
       btn.disabled = false;
-      btn.textContent = "Iniciar recepción";
+      btn.textContent = texto;
       return;
     }
   }
@@ -392,6 +398,7 @@ async function cierre(rec) {
   const obs = el("textarea", { rows: "2" }, `Se reciben ${t.envases ? `${t.envases} envases` : `${t.n} pallets`} de ${fruta}.`);
   const firma = panelFirma();
   const desvioPct = Math.round(t.desvio * 100);
+  const rechazada = (o.Estado_calidad || "") === "Rechazado";
 
   const f = (label, input, extra) => el("label", { class: "campo" }, [el("span", { class: "campo-label" }, label), input, extra || null]);
   const btn = el("button", { class: "btn btn-azul btn-xl" }, "Cerrar recepción y enviar resumen");
@@ -417,6 +424,7 @@ async function cierre(rec) {
         f("Conductor", conductor),
         f("Placa", placa),
       ]),
+      rechazada ? el("div", { class: "aviso" }, "Carga rechazada por Calidad: aquí van solo los pallets de fruta conforme que se aceptaron.") : null,
       f("Comentarios de la recepción", obs),
       firma.nodo,
       btn,
@@ -439,7 +447,7 @@ async function cierre(rec) {
       await firma.blob()
     );
     h.cerrar();
-    toast(`Recepción cerrada · ${st.fmtKg(t.neto)} kg. El resumen se envía a ${c}`);
-    location.hash = "#/bodega";
+    toast(`Recepción cerrada · ${st.fmtKg(t.neto)} kg. Falta asignar lote y número de ingreso.`);
+    location.hash = "#/bodega/recepciones";
   });
 }

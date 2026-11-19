@@ -618,7 +618,7 @@ export async function listarRecepcionesCerradas(dias = 7) {
     where: [["Estado", "eq", "Finalizada"], ["HoraCierre", "ge", desde]],
     orderby: "HoraCierre desc",
     top: 300,
-    select: ["ID", "ID_1", "Proveedor", "Fruta", "TotalNeto", "HoraLlegada", "HoraCierre", "Bodeguero", "Correo", "EstadoAnterior"],
+    select: ["ID", "ID_1", "Proveedor", "Fruta", "TotalNeto", "HoraLlegada", "HoraCierre", "Bodeguero", "Correo", "EstadoAnterior", "Lote", "NumeroIngreso"],
   });
 }
 
@@ -687,7 +687,12 @@ export async function ultimasLiberaciones(fruta, n = 3) {
   }
 }
 
-export async function registrarLiberacion(orden, { brix, ph, acidez, obs, inicio }, decision) {
+// Formato M.ASC.02R04: además de °Bx/pH/acidez, la inspección del camión (al llegar), madurez 1–5,
+// insectos/pudrición, liberación CON CONDICIÓN (sigue siendo "Liberado", con Condicionado = "Sí"),
+// detalle solo en rechazos y análisis micro opcional (queda pendiente de resultado).
+// i = { madurez, insectos, pudricion, danos, olor, contaminacion, seguridad, plagas, transporte,
+//       condicionado, detalle, micro, responsable }
+export async function registrarLiberacion(orden, { brix, ph, acidez, obs, inicio, i = {} }, decision) {
   const ahora = new Date().toISOString();
   const titulo = `Liberación ${fmtFecha(ahora)}`;
   await encolar({
@@ -707,6 +712,7 @@ export async function registrarLiberacion(orden, { brix, ph, acidez, obs, inicio
       PH: ph,
       Acidez: acidez,
       Observaciones: obs || null,
+      ...camposInspeccion(i, decision),
     },
   });
   await encolar({ tipo: "update", lista: "ordenes", id: orden.ID, campos: { Estado_calidad: decision } });
@@ -733,7 +739,7 @@ export async function historialLiberaciones(dias = 30) {
       where: [["HoraLlegada", "ge", margen]],
       orderby: "HoraLlegada asc",
       top: 3000,
-      select: ["ID", "ID_1", "Estado", "TotalNeto", "TotalBruto", "TotalTara", "HoraLlegada", "HoraCierre", "Bodeguero", "Conductor", "Placa", "ObservacionesProveedor"],
+      select: ["ID", "ID_1", "Estado", "TotalNeto", "TotalBruto", "TotalTara", "HoraLlegada", "HoraCierre", "Bodeguero", "Conductor", "Placa", "ObservacionesProveedor", "Lote", "NumeroIngreso"],
     }),
     api.items("ordenes", { orderby: "ID desc", top: Math.max(800, dias * 20), select: ["ID", "OData__x0049_D2", "Created", "FechaProgramada", "CantidadProgramada", "Unidad", "Estado"] }),
     api.items("pallets", {
@@ -779,6 +785,170 @@ export async function historialLiberaciones(dias = 30) {
       bodeguero: [...new Set(recepciones.map((r) => r.Bodeguero).filter(Boolean))].join(", "),
       conductor: [...new Set(recepciones.map((r) => r.Conductor).filter(Boolean))].join(", "),
       placa: [...new Set(recepciones.map((r) => r.Placa).filter(Boolean))].join(", "),
+    };
+  });
+}
+
+// Columnas nuevas de Liberaciones (formato M.ASC.02R04). Sí/No en texto para que se lean igual en Excel.
+export const COLUMNAS_LIBERACION_MP = {
+  Responsable: "Text", Madurez: "Number", Insectos: "Text", Pudricion: "Text", DanosMecanicos: "Text",
+  OlorPesticida: "Text", ContaminacionFisica: "Text", SeguridadIndustrial: "Text", PlagasTransporte: "Text",
+  CondicionesTransporte: "Text", Condicionado: "Text", DetalleRechazo: "Note", AnalisisMicro: "Text",
+  MicroAerobios: "Number", MicroMohosLevaduras: "Number", MicroColiformes: "Number", MicroEColi: "Number",
+  MicroSalmonella: "Text", MicroFecha: "DateTime", MicroPor: "Text",
+};
+// Fruta conforme / no conforme NO se guardan: se deducen (recibido = conforme; rechazo de Calidad = no conforme).
+export const COLUMNAS_RECEPCION_MP = { Lote: "Text", NumeroIngreso: "Number" };
+const sino = (v) => (v === true ? "Sí" : v === false ? "No" : null);
+function camposInspeccion(i, decision) {
+  return {
+    Responsable: i.responsable || null,
+    Madurez: i.madurez ?? null,
+    Insectos: sino(i.insectos),
+    Pudricion: sino(i.pudricion),
+    DanosMecanicos: sino(i.danos),
+    OlorPesticida: sino(i.olor),
+    ContaminacionFisica: sino(i.contaminacion),
+    SeguridadIndustrial: i.seguridad === true ? "Cumple" : i.seguridad === false ? "No cumple" : null,
+    PlagasTransporte: sino(i.plagas),
+    CondicionesTransporte: i.transporte === true ? "OK" : i.transporte === false ? "No OK" : null,
+    Condicionado: decision === "Liberado" && i.condicionado ? "Sí" : "No",
+    DetalleRechazo: decision === "Rechazado" ? i.detalle || null : null,
+    AnalisisMicro: i.micro ? "Sí" : "No",
+  };
+}
+
+// ---- Bodega: lo conforme de una carga rechazada, lote e ingreso ----
+// Calidad rechaza la carga completa; Bodega puede recibir solo la fruta conforme.
+export async function tieneRechazo(orden) {
+  try {
+    const rows = await api.items("liberaciones", { where: [["ID_1", "eq", idnDe(orden)], ["Estado", "eq", "Rechazado"]], top: 1, orderby: "ID desc" });
+    if (rows.length) return true;
+  } catch {}
+  return (await idb.getAll("outbox")).some((o) => o.lista === "liberaciones" && o.campos?.ID_1 === idnDe(orden) && o.campos?.Estado === "Rechazado");
+}
+
+// Datos de apoyo del registro M.ASC.02R04 (historial y números de lote por proveedor): llevan nombres de
+// proveedores y análisis, así que NO se publican en GitHub Pages; viven en SharePoint junto a
+// configuracion.json y se leen con la sesión del usuario (copia en el equipo para trabajar sin señal).
+// En el modo demo salen de data/ local (fuera de git).
+async function archivoApoyo(nombre) {
+  const k = "cache:apoyo:" + nombre;
+  try {
+    const j = JSON.parse(await api.leerTexto(`${CONFIG.archivoConfig.carpeta}/${nombre}`));
+    await kv.set(k, j);
+    return j;
+  } catch {
+    const c = await kv.get(k, null);
+    if (c) return c;
+    try { return await (await fetch("data/" + nombre, { cache: "no-cache" })).json(); } catch { return null; }
+  }
+}
+
+// Lote de MP: L + día del año (3) + año (2) + "-" + número del proveedor para esa fruta.
+let SUFIJOS = null;
+async function sufijos() {
+  if (SUFIJOS) return SUFIJOS;
+  SUFIJOS = (await archivoApoyo("sufijos_lote_mp.json")) || { porProveedorFruta: {}, porProveedor: {}, ultimoIngreso: 0 };
+  return SUFIJOS;
+}
+const sinTildes = (s) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+const codigoMP = (fruta) => { const m = /MP0*(\d+)/i.exec(fruta || ""); return m ? "MP" + m[1] : ""; };
+const diaDelAnioFecha = (fecha) => { const d = new Date(fecha); return Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(d.getFullYear(), 0, 0)) / 86400000); };
+export async function sugerirLoteMP(rec) {
+  const f = new Date(rec.HoraLlegada || rec.HoraCierre || Date.now());
+  const base = `L${String(diaDelAnioFecha(f)).padStart(3, "0")}${String(f.getFullYear()).slice(-2)}`;
+  const prov = sinTildes(rec.Proveedor), mp = codigoMP(rec.Fruta);
+  let suf = null;
+  // 1) el último lote que Bodega puso en el Hub para este proveedor y fruta
+  try {
+    const prev = await api.items("recepciones", { where: [["Proveedor", "eq", rec.Proveedor], ["Fruta", "eq", rec.Fruta], ["Lote", "ne", null]], orderby: "ID desc", top: 1, select: ["Lote"] });
+    const m = prev[0] && /-(\d+)\s*$/.exec(prev[0].Lote || "");
+    if (m) suf = m[1];
+  } catch {}
+  // 2) el registro M.ASC.02R04 de 2026
+  if (!suf) { const t = await sufijos(); suf = t.porProveedorFruta[`${prov}|${mp}`] || t.porProveedor[prov] || null; }
+  return { base, sufijo: suf, lote: suf ? `${base}-${suf}` : `${base}-` };
+}
+export async function siguienteIngreso() {
+  let max = (await sufijos()).ultimoIngreso || 0;
+  try {
+    const r = await api.items("recepciones", { where: [["Estado", "eq", "Finalizada"]], orderby: "ID desc", top: 200, select: ["NumeroIngreso"] });
+    for (const x of r) max = Math.max(max, +x.NumeroIngreso || 0);
+  } catch {}
+  return max + 1;
+}
+export async function asignarLoteIngreso(rec, { lote, ingreso }) {
+  await encolar({ tipo: "update", lista: "recepciones", id: rec.ID, campos: { Lote: lote || null, NumeroIngreso: ingreso ?? null } });
+}
+
+// Histórico de liberaciones de una fruta: las del Hub + las del Excel M.ASC.02R04 de 2026
+// (data/historial_mp.json), lo más reciente primero.
+let HIST_MP = null;
+export async function historialFruta(orden) {
+  const mp = codigoMP(orden.Fruta);
+  const hub = await (async () => {
+    try { return await api.items("liberaciones", { where: [["Fruta", "eq", orden.Fruta]], orderby: "ID desc", top: 15 }); } catch { return []; }
+  })();
+  if (!HIST_MP) HIST_MP = (await archivoApoyo("historial_mp.json"))?.porFruta || {};
+  const iso = (d) => new Date(d).toISOString().slice(0, 10);
+  const filas = hub.map((l) => ({
+    iso: iso(l.HoraCierre || l.Created), proveedor: (l.Proveedor || "").trim(), bx: l.OData__x00b0_Brix, ph: l.PH, ac: l.Acidez, mad: l.Madurez,
+    est: l.Estado === "Rechazado" ? "RECHAZADO" : l.Condicionado === "Sí" ? "CON CONDICIÓN" : "LIBERADO", obs: l.Observaciones || l.DetalleRechazo || "",
+  })).concat((HIST_MP[mp] || []).map((x) => ({ iso: x.f, proveedor: x.p, bx: x.bx, ph: x.ph, ac: x.ac, mad: x.mad, est: x.est, obs: x.obs })));
+  filas.sort((a, b) => b.iso.localeCompare(a.iso));
+  return filas.map((f) => ({ ...f, fecha: f.iso.split("-").reverse().join("/") }));
+}
+
+// ---- Microbiología de materia prima (cuando se marcó "Análisis micro") ----
+export async function microPendientesMP() {
+  const rows = await api.items("liberaciones", { where: [["AnalisisMicro", "eq", "Sí"]], orderby: "ID desc", top: 400 });
+  return rows.filter((r) => !r.MicroFecha);
+}
+export async function cargarMicroMP(lib, v) {
+  await encolar({
+    tipo: "update", lista: "liberaciones", id: lib.ID,
+    campos: { MicroAerobios: v.aerobios, MicroMohosLevaduras: v.mohos, MicroColiformes: v.coliformes, MicroEColi: v.ecoli, MicroSalmonella: v.salmonella || null, MicroFecha: new Date().toISOString(), MicroPor: usuario?.nombre || "" },
+  });
+}
+
+// ---- Registro M.ASC.02R04 armado desde el Hub (sin digitar dos veces) ----
+export async function registroRecepcionMP(dias = 30) {
+  const filas = await historialLiberaciones(dias);
+  const x = (v) => (v === "Sí" ? "SÍ" : v === "No" ? "NO" : v ?? "");
+  return filas.slice().reverse().map((h, n) => {
+    const l = h.lib, r = h.recepciones.find((q) => q.Estado === "Finalizada") || h.recepciones[0] || {};
+    const estatus = l.Estado === "Rechazado" ? (h.netoRecibido ? "RECHAZADO (SE RECIBIÓ LO CONFORME)" : "RECHAZADO") : l.Condicionado === "Sí" ? "LIBERADO CON CONDICIÓN" : "LIBERADO";
+    const micro = l.AnalisisMicro !== "Sí" ? "N/A" : l.MicroFecha ? `Aer ${l.MicroAerobios ?? "-"} · M/L ${l.MicroMohosLevaduras ?? "-"} · Col ${l.MicroColiformes ?? "-"} · E.coli ${l.MicroEColi ?? "-"} · Salm ${l.MicroSalmonella ?? "-"}` : "PENDIENTE";
+    // Automático: lo que Bodega recibió es fruta conforme; si Calidad rechazó, hubo fruta no conforme.
+    return {
+      R: n + 1,
+      Fecha: fmtFecha(l.HoraCierre || l.Created, false),
+      LOTE: r.Lote || "",
+      "Cantidad en Kg": h.netoRecibido ?? "",
+      KARDEX: l.Fruta || "",
+      Proveedor: (l.Proveedor || "").trim(),
+      "ESTATUS RECIBIDO": estatus,
+      "RESPONSABLE RECEPCIÓN": l.Responsable || l.Operario || "",
+      detalle: l.DetalleRechazo || "",
+      "NÚMERO INGRESO": r.NumeroIngreso ?? "",
+      "ºbx": l.OData__x00b0_Brix ?? "",
+      pH: l.PH ?? "",
+      Acidez: l.Acidez ?? "",
+      "Hora liberación": l.HoraCierre ? new Date(l.HoraCierre).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit", hour12: false }) : "",
+      "ºmadurez": l.Madurez ?? "",
+      "seguridad industrial": l.SeguridadIndustrial || "",
+      Insectos: x(l.Insectos),
+      "Daños mecánicos": x(l.DanosMecanicos),
+      "Pudrición": x(l.Pudricion),
+      "Olor a pesticida": x(l.OlorPesticida),
+      "Contaminación física": x(l.ContaminacionFisica),
+      "ANALISIS MICRO": micro,
+      "FRUTA CONFORME": h.netoRecibido ? "SÍ" : "",
+      "FRUTA NO CONFORME": l.Estado === "Rechazado" ? "SÍ" : "",
+      "PLAGAS EN EL TRANSPORTE": x(l.PlagasTransporte),
+      "CONDICIONES DE TRANSPORTE": l.CondicionesTransporte || "",
+      "OBSERVACIONES o INCIDENCIAS": l.Observaciones || "",
     };
   });
 }
@@ -1696,3 +1866,7 @@ export async function temperaturasRango(desde, hasta) {
     top: 5000,
   });
 }
+
+// Preferencias simples del equipo (p. ej. la última analista que liberó).
+export const kvGet = (k, d = null) => kv.get(k, d);
+export const kvSet = (k, v) => kv.set(k, v);

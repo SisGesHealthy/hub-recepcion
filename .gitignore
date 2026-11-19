@@ -1,1 +1,5 @@
 __pycache__/
+
+# Datos del registro M.ASC.02R04 (proveedores y análisis): viven en SharePoint, no en Pages
+data/historial_mp.json
+data/sufijos_lote_mp.json

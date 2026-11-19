@@ -4,7 +4,28 @@
 
 import { el, clear } from "./dom.js";
 import * as st from "./store.js";
-import { toast, confirmar, imagen, vacio } from "./ui.js";
+import { toast, confirmar, imagen, vacio, hoja } from "./ui.js";
+
+// Después de cerrar la recepción, Bodega asigna el lote (sugerido: L + día del año + año + número del
+// proveedor para esa fruta) y el número de ingreso (sugerido: el siguiente correlativo).
+export async function asignarLoteIngreso(rec, alTerminar) {
+  const [sug, sigIng] = await Promise.all([st.sugerirLoteMP(rec), st.siguienteIngreso()]);
+  const lote = el("input", { type: "text", value: rec.Lote || sug.lote, style: "text-transform:uppercase;font-size:20px;font-weight:700" });
+  const ingreso = el("input", { type: "text", inputmode: "numeric", value: rec.NumeroIngreso ?? sigIng, style: "font-size:20px;font-weight:700" });
+  const h = hoja(`Lote e ingreso · ${(rec.Proveedor || "").trim()}`, [
+    el("p", { class: "sub" }, `${rec.Fruta} · #${rec.ID_1} · cerrada ${st.fmtFecha(rec.HoraCierre)} · ${st.fmtKg(rec.TotalNeto)} kg`),
+    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Lote"), lote,
+      el("small", { class: "dim" }, sug.sufijo ? `Sugerido: día ${sug.base.slice(1, 4)} del año + número ${sug.sufijo} de este proveedor para esta fruta. Revísalo.` : "Sin número anterior para este proveedor y fruta: completa el número después del guion.")]),
+    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Número de ingreso"), ingreso, el("small", { class: "dim" }, `Sugerido el siguiente: ${sigIng}`)]),
+    el("button", { class: "btn btn-verde btn-xl", onclick: async () => {
+      const l = lote.value.trim().toUpperCase(), n = Number(String(ingreso.value).replace(/\D/g, ""));
+      if (!/^L\d{5}-\d+$/.test(l) && !(await confirmar("¿Lote correcto?", `"${l}" no tiene la forma L32326-21. ¿Guardar igual?`, { si: "Sí, guardar" }))) return;
+      if (!n) return toast("Falta el número de ingreso", "err");
+      await st.asignarLoteIngreso(rec, { lote: l, ingreso: n });
+      h.cerrar(); toast(`Lote ${l} · ingreso ${n} guardados`); alTerminar?.();
+    } }, "Guardar lote e ingreso"),
+  ]);
+}
 
 export async function lista(vista) {
   const cont = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Cargando recepciones…"));
@@ -37,7 +58,12 @@ export async function lista(vista) {
             el("span", { class: "orden-fecha" }, `Cerrada ${st.fmtFecha(r.HoraCierre)} · #${r.ID_1}${r.Bodeguero ? ` · ${r.Bodeguero}` : ""}`),
           ]),
           el("div", { class: "orden-cant" }, [el("b", {}, st.fmtKg(r.TotalNeto)), el("small", {}, "KG neto")]),
-          el("div", { class: "orden-accion" }, el("span", { class: "btn btn-sec" }, "Ver resumen")),
+          el("div", { class: "orden-accion" }, [
+            r.Lote && r.NumeroIngreso
+              ? el("span", { class: "estado estado-verde" }, `${r.Lote} · ing. ${r.NumeroIngreso}`)
+              : el("button", { class: "btn btn-ambar", onclick: (e) => { e.preventDefault(); e.stopPropagation(); asignarLoteIngreso(r, cargar); } }, "Asignar lote e ingreso"),
+            el("span", { class: "btn btn-sec" }, "Ver resumen"),
+          ]),
         ])
       );
     }
@@ -96,6 +122,7 @@ export async function detalle(vista, id, { volver = ["#/bodega/recepciones", "�
             toast("Reenvío solicitado: el correo sale en 1-2 minutos");
           },
         }, "✉ Reenviar correo"),
+        !reenviar ? null : el("button", { class: "btn btn-ambar", onclick: () => asignarLoteIngreso(rec, () => location.reload()) }, rec.Lote ? "Editar lote e ingreso" : "Asignar lote e ingreso"),
         el("button", { class: "btn btn-azul", onclick: () => window.print() }, "🖨 Imprimir"),
       ]),
     ]),
@@ -116,6 +143,8 @@ export async function detalle(vista, id, { volver = ["#/bodega/recepciones", "�
           fila("Conductor", rec.Conductor),
           fila("Placa", rec.Placa),
           fila("Bodeguero", rec.Bodeguero),
+          fila("Lote", rec.Lote),
+          fila("Número de ingreso", rec.NumeroIngreso != null ? String(rec.NumeroIngreso) : null),
           fila("Registrado por", rec.Operario),
         ]),
       ]),
