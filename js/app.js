@@ -58,7 +58,29 @@ async function main() {
   } catch {}
   window.addEventListener("hashchange", rutear);
   rutear();
-  if ("serviceWorker" in navigator && !CONFIG.useMock) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && !CONFIG.useMock) activarActualizaciones();
+}
+
+// Actualización sola: cuando se publica una versión nueva, la app abierta en la tablet la detecta
+// (revisa cada 5 min y al volver a la pantalla) y se recarga. Si hay un formulario abierto no se
+// pierde nada: aparece un aviso "Actualizar" y se recarga cuando la persona lo toque.
+function activarActualizaciones() {
+  const teniaVersion = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register("sw.js").then((reg) => {
+    const revisar = () => reg.update().catch(() => {});
+    setInterval(revisar, 5 * 60000);
+    document.addEventListener("visibilitychange", () => !document.hidden && revisar());
+  }).catch(() => {});
+  let recargando = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!teniaVersion || recargando) return; // primera instalación: no hace falta recargar
+    if (!document.querySelector(".hoja")) { recargando = true; location.reload(); return; }
+    if (document.getElementById("aviso-version")) return;
+    document.body.appendChild(el("div", { id: "aviso-version", class: "aviso-version" }, [
+      el("span", {}, "Hay una versión nueva de la app."),
+      el("button", { class: "btn btn-verde btn-sm", onclick: () => location.reload() }, "Actualizar"),
+    ]));
+  });
 }
 
 function pantallaLogin(auth, error) {
