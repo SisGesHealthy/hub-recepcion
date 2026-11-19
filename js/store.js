@@ -1072,6 +1072,21 @@ export async function guardarMicroLote(registros, valores) {
   return n;
 }
 
+// La muestra de laboratorio se toma por PRODUCTO y FECHA DE FABRICACIÓN (no
+// por lote): en un mismo día puede haber varios lotes del mismo producto y
+// todos llevan el mismo resultado. Devuelve todas las paradas de ese grupo.
+export async function registrosMicroGrupo(codProducto, dia) {
+  if (!codProducto || !dia) return [];
+  return api.items("registros", {
+    where: [["COD_Producto", "eq", codProducto], ["Fecha_produccion", "ge", new Date(diaASP(dia))], ["Fecha_produccion", "lt", new Date(diaASP(sumarDias(dia, 1)))]],
+    top: 1000,
+  });
+}
+
+export async function guardarMicroGrupo(codProducto, dia, valores) {
+  return guardarMicroLote(await registrosMicroGrupo(codProducto, dia), valores);
+}
+
 export async function cerrarLote(lote) {
   await encolar({ tipo: "update", lista: "lotes", id: lote.ID, campos: { field_4: "Finalizado" } });
   const rows = await kv.get("cache:lotes", []);
@@ -1273,16 +1288,18 @@ export async function lotesMicroPendiente(dias = 21) {
     api.items("registros", { where: [["Fecha_produccion", "ge", desde]], top: 5000 }),
     api.items("lotes", { where: [["Fechadeproducci_x00f3_n", "ge", desde]], top: 2000 }),
   ]);
+  // Un grupo = producto + fecha de fabricación (puede abarcar varios lotes).
   const grupos = {};
   for (const r of regs) {
-    const k = `${r.Title}|${diaISO(r.Fecha_produccion)}`;
-    const g = (grupos[k] ||= { lote: r.Title, fecha: diaISO(r.Fecha_produccion), paradas: 0, conMicro: 0 });
+    const fecha = diaISO(r.Fecha_produccion);
+    const k = `${r.COD_Producto || r.Title}|${fecha}`;
+    const g = (grupos[k] ||= { codProducto: r.COD_Producto || null, fecha, lotes: [], paradas: 0, conMicro: 0 });
     g.paradas++;
+    if (!g.lotes.some((l) => l.lote === r.Title)) g.lotes.push({ lote: r.Title, id: lotes.find((l) => l.Title === r.Title && diaISO(l.Fechadeproducci_x00f3_n) === fecha)?.ID || null });
     if (r[cols.aerobios] !== null && r[cols.aerobios] !== undefined) g.conMicro++;
   }
   return Object.values(grupos)
     .filter((g) => g.conMicro < g.paradas)
-    .map((g) => ({ ...g, id: lotes.find((l) => l.Title === g.lote && diaISO(l.Fechadeproducci_x00f3_n) === g.fecha)?.ID || null }))
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 

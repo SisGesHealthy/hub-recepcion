@@ -16,7 +16,7 @@ export async function render(vista, resto) {
   const prodDe = (lote) => cat.find((c) => c.ID === lote.Producto_x002d_CODId) || null;
   if (resto[0] === "lote" && resto[1]) return pantallaLote(vista, Number(resto[1]), prodDe);
   if (resto[0] === "reporte") return (await import("./reporte.js")).render(vista);
-  if (resto[0] === "micro") return pantallaMicroPendiente(vista);
+  if (resto[0] === "micro") return pantallaMicroPendiente(vista, cat);
   if (resto[0] === "qr") return (await import("./accesos.js")).render(vista);
   const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
   return pantallaDia(vista, dia, cat);
@@ -24,14 +24,40 @@ export async function render(vista, resto) {
 
 // ---------------- microbiología pendiente ----------------
 
-async function pantallaMicroPendiente(vista) {
-  const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Buscando lotes sin microbiología…"));
+// Formulario de resultados de laboratorio. actual: valores ya cargados.
+function formMicro(actual = {}) {
+  const aer = campoNum("Aerobios", { valor: actual.aerobios ?? "" });
+  const moh = campoNum("Mohos y levaduras", { valor: actual.mohos ?? "" });
+  const col = campoNum("Coliformes", { valor: actual.coliformes ?? "" });
+  const eco = campoNum("E. coli", { valor: actual.ecoli ?? "" });
+  const sal = el("input", { type: "text", value: actual.salmonella ?? "", placeholder: "Ej. Ausencia" });
+  return {
+    nodo: el("div", { class: "campos-3" }, [aer.wrap, moh.wrap, col.wrap, eco.wrap, el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Salmonella"), sal])]),
+    valores: () => ({ aerobios: aer.val(), mohos: moh.val(), coliformes: col.val(), ecoli: eco.val(), salmonella: sal.value.trim() }),
+  };
+}
+
+// Valores de microbiología ya cargados en alguna parada del grupo.
+async function microActual(regs) {
+  const cols = await st.columnasRegistros();
+  const r = regs.find((x) => cols.aerobios && x[cols.aerobios] != null) || regs.find((x) => cols.mohos && x[cols.mohos] != null);
+  if (!r) return {};
+  const v = (k) => (cols[k] ? r[cols[k]] : null);
+  return { aerobios: v("aerobios"), mohos: v("mohos"), coliformes: v("coliformes"), ecoli: v("ecoli"), salmonella: v("salmonella") };
+}
+
+async function pantallaMicroPendiente(vista, cat) {
+  const nombreProd = (cod) => {
+    const p = cat.find((c) => (c.Ordenamiento || "").trim() === (cod || "").trim());
+    return p ? `${p.Title} · ${p.field_1 || ""}` : cod || "Producto sin código";
+  };
+  const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Buscando producción sin microbiología…"));
   vista.append(
     el("div", { class: "cab" }, [
       el("div", {}, [
         el("a", { href: `#/planta/${st.hoyISO()}`, class: "volver" }, "← Producción del día"),
         el("h1", { class: "titulo" }, "Microbiología pendiente"),
-        el("p", { class: "sub" }, "Lotes de las últimas 3 semanas con paradas sin resultado de laboratorio"),
+        el("p", { class: "sub" }, "Por producto y fecha de fabricación (últimas 3 semanas). El resultado se aplica a todos los lotes de ese día."),
       ]),
     ]),
     lista
@@ -43,17 +69,47 @@ async function pantallaMicroPendiente(vista) {
     return vacio(lista, "No se pudo leer SharePoint: " + e.message);
   }
   clear(lista);
-  if (!rows.length) return vacio(lista, "No hay lotes pendientes de microbiología. ✓");
+  if (!rows.length) return vacio(lista, "No hay producción pendiente de microbiología. ✓");
   for (const g of rows)
     lista.appendChild(
       el("div", { class: "orden lote" }, [
         el("div", { class: "orden-info" }, [
-          el("strong", { class: "orden-prov" }, g.lote),
-          el("span", { class: "orden-fecha" }, `Producción ${st.fmtDia(g.fecha)} · ${g.paradas - g.conMicro} de ${g.paradas} paradas sin resultado`),
+          el("strong", { class: "orden-prov" }, nombreProd(g.codProducto)),
+          el("span", { class: "orden-fecha" }, `Fabricación ${st.fmtDia(g.fecha)} · ${g.lotes.length === 1 ? "lote" : `${g.lotes.length} lotes`}: ${g.lotes.map((l) => l.lote).join(", ")}`),
+          el("span", { class: "orden-fecha" }, `${g.paradas - g.conMicro} de ${g.paradas} paradas sin resultado`),
         ]),
-        el("div", { class: "orden-accion" }, g.id ? el("a", { class: "btn btn-verde", href: `#/planta/lote/${g.id}` }, "Cargar resultado") : el("span", { class: "estado estado-ambar" }, "Lote no encontrado")),
+        el("div", { class: "orden-accion" }, el("button", { class: "btn btn-verde", disabled: g.codProducto ? null : "", onclick: () => cargarMicroGrupo(g, nombreProd(g.codProducto)) }, "Cargar resultado")),
       ])
     );
+}
+
+async function cargarMicroGrupo(g, nombre) {
+  let regs = [];
+  try {
+    regs = await st.registrosMicroGrupo(g.codProducto, g.fecha);
+  } catch (e) {
+    return toast("No se pudo leer SharePoint: " + e.message, "err");
+  }
+  const f = formMicro(await microActual(regs));
+  const btn = el("button", { class: "btn btn-verde btn-xl" }, `Guardar en las ${regs.length} paradas`);
+  const h = hoja("Microbiología", [
+    el("p", { class: "sub" }, `${nombre} · fabricación ${st.fmtDia(g.fecha)}`),
+    el("p", { class: "nota" }, `Se guarda en ${g.lotes.length === 1 ? "el lote" : `los ${g.lotes.length} lotes`} ${g.lotes.map((l) => l.lote).join(", ")} (${regs.length} paradas).`),
+    f.nodo,
+    btn,
+  ]);
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    const n = await st.guardarMicroLote(regs, f.valores());
+    if (!n) {
+      btn.disabled = false;
+      return toast("Ingresa al menos un resultado", "err");
+    }
+    h.cerrar();
+    toast(`Microbiología guardada en ${n} paradas`);
+    await st.subirAhora();
+    location.reload();
+  });
 }
 
 // ---------------- día de producción ----------------
@@ -486,29 +542,34 @@ async function pantallaLote(vista, id, prodDe) {
     });
   }
 
-  // Microbiología del lote (resultado de laboratorio, días después).
-  function pintarMicro() {
+  // Microbiología (resultado de laboratorio, días después): la muestra es por
+  // producto y fecha de fabricación, así que se guarda en todas las paradas de
+  // ese producto en ese día, aunque sean de otros lotes.
+  async function pintarMicro() {
     clear(micro);
-    const conID = paradas.filter((p) => p.ID);
-    if (!conID.length) return;
-    const actual = conID.map((p) => extras.get(p)).find((e) => e && (e.aerobios != null || e.mohos != null)) || {};
-    const aer = campoNum("Aerobios", { valor: actual.aerobios ?? "" });
-    const moh = campoNum("Mohos y levaduras", { valor: actual.mohos ?? "" });
-    const col = campoNum("Coliformes", { valor: actual.coliformes ?? "" });
-    const eco = campoNum("E. coli", { valor: actual.ecoli ?? "" });
-    const sal = el("input", { type: "text", value: actual.salmonella ?? "", placeholder: "Ej. Ausencia" });
+    if (!paradas.some((p) => p.ID)) return;
+    const dia = st.diaISO(lote.Fechadeproducci_x00f3_n);
+    let regs = [];
+    try {
+      regs = prod?.Ordenamiento ? await st.registrosMicroGrupo(prod.Ordenamiento, dia) : [];
+    } catch {}
+    if (!regs.length) regs = paradas.filter((p) => p.ID); // sin código de producto: solo este lote
+    const otrosLotes = [...new Set(regs.map((r) => r.Title))].filter((t) => t !== lote.Title);
+    const actual = await microActual(regs);
+    const f = formMicro(actual);
     const pendiente = actual.aerobios == null && actual.mohos == null;
-    const btnM = el("button", { class: "btn btn-sec", type: "button" }, `Guardar en las ${conID.length} paradas`);
+    const btnM = el("button", { class: "btn btn-sec", type: "button" }, `Guardar en las ${regs.length} paradas`);
     btnM.addEventListener("click", async () => {
-      const n = await st.guardarMicroLote(conID, { aerobios: aer.val(), mohos: moh.val(), coliformes: col.val(), ecoli: eco.val(), salmonella: sal.value.trim() });
+      const n = await st.guardarMicroLote(regs, f.valores());
       if (!n) return toast("Ingresa al menos un resultado", "err");
       toast(`Microbiología guardada en ${n} paradas`);
       setTimeout(cargar, 800);
     });
     micro.append(
       el("details", { class: "micro" }, [
-        el("summary", {}, pendiente ? "Microbiología del lote · pendiente de laboratorio" : "Microbiología del lote · registrada"),
-        el("div", { class: "campos-3" }, [aer.wrap, moh.wrap, col.wrap, eco.wrap, el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Salmonella"), sal])]),
+        el("summary", {}, `Microbiología · ${prod?.Title || ""} fabricación ${st.fmtDia(dia)} · ${pendiente ? "pendiente de laboratorio" : "registrada"}`),
+        otrosLotes.length ? el("p", { class: "nota" }, `Es la misma muestra para los lotes del día: ${[lote.Title, ...otrosLotes].join(", ")}. Se guarda en todos.`) : null,
+        f.nodo,
         el("div", { class: "fila-botones" }, btnM),
       ])
     );
