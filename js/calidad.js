@@ -131,7 +131,21 @@ async function liberar(orden, alTerminar) {
   const madBtns = [1, 2, 3, 4, 5].map((n) => el("button", { type: "button", class: "opt mad" }, String(n)));
   madBtns.forEach((b, i) => b.addEventListener("click", () => { resp.madurez = i + 1; madBtns.forEach((x, j) => (x.className = "opt mad" + (j === i ? " on ok" : ""))); }));
 
-  const responsable = el("select", {}, [el("option", { value: "" }, "— ¿Quién libera? —"), ...CONFIG.responsablesPlanta.map((r) => el("option", { value: r }, r))]);
+  // Lista de Configuración + "Otra persona" (caso raro: alguien fuera de la lista; se escribe el nombre).
+  const OTRA = "__otra__";
+  const responsable = el("select", {}, [
+    el("option", { value: "" }, "— ¿Quién libera? —"),
+    ...CONFIG.responsablesPlanta.map((r) => el("option", { value: r }, r)),
+    el("option", { value: OTRA }, "Otra persona (escribir el nombre)…"),
+  ]);
+  const otraPersona = el("input", { type: "text", class: "hidden", placeholder: "Nombre y apellido de quien libera", autocomplete: "off" });
+  const verOtra = () => {
+    const es = responsable.value === OTRA;
+    otraPersona.classList.toggle("hidden", !es);
+    if (es) setTimeout(() => otraPersona.focus(), 50);
+  };
+  responsable.addEventListener("change", verOtra);
+  const nombreResponsable = () => (responsable.value === OTRA ? otraPersona.value.trim().replace(/\s+/g, " ") : responsable.value);
   st.kvGet?.("ultimoResponsableMP").then?.((v) => { if (v && CONFIG.responsablesPlanta.includes(v)) responsable.value = v; });
   const micro = el("input", { type: "checkbox" });
 
@@ -170,7 +184,7 @@ async function liberar(orden, alTerminar) {
   const btnRech = el("button", { class: "btn btn-rojo btn-xl" }, "Rechazado");
   const h = hoja(`${orden.Proveedor?.trim()} · ${orden.Fruta}`, [
     el("p", { class: "sub" }, `Programada ${st.fmtFecha(orden.FechaProgramada)} · ${st.fmtKg(orden.CantidadProgramada)} ${orden.Unidad || "KG"} · #${st.idnDe(orden)}`),
-    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Responsable de la liberación"), responsable]),
+    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Responsable de la liberación"), responsable, otraPersona]),
     inspeccion,
     analisis,
     el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Observaciones o incidencias"), obs]),
@@ -185,6 +199,7 @@ async function liberar(orden, alTerminar) {
   async function decidir(decision) {
     const v = { brix: brix.val(), ph: ph.val(), acidez: acidez.val(), obs: obs.value.trim(), inicio };
     if (!responsable.value) return toast("Elige quién hace la liberación", "err");
+    if (responsable.value === OTRA && nombreResponsable().length < 5) { otraPersona.focus(); return toast("Escribe el nombre y apellido de quien libera", "err"); }
     const faltan = Object.keys(MAL).filter((k) => resp[k] === undefined);
     if (faltan.length) return toast(`Falta responder: ${faltan.map((k) => NOMBRES[k]).join(", ")}`, "err");
     if (!resp.madurez) return toast("Falta la madurez (1–5)", "err");
@@ -193,7 +208,7 @@ async function liberar(orden, alTerminar) {
       const ok = await confirmar("Valor fuera de lo habitual", `°Brix ${v.brix} · pH ${v.ph} · acidez ${v.acidez ?? "—"}. ¿Es correcto o es un error de tipeo?`, { si: "Es correcto", no: "Corregir" });
       if (!ok) return;
     }
-    const i = { ...resp, micro: micro.checked, responsable: responsable.value, condicionado: false, detalle: null };
+    const i = { ...resp, micro: micro.checked, responsable: nombreResponsable(), condicionado: false, detalle: null };
     const problemas = Object.keys(MAL).filter((k) => resp[k] !== MAL[k]);
     if (decision === "Liberado" && problemas.length) {
       // Insectos / pudrición (u otra no conformidad): decide la analista.
@@ -215,7 +230,7 @@ async function liberar(orden, alTerminar) {
       i.detalle = det;
     }
     btnLib.disabled = btnRech.disabled = true;
-    st.kvSet?.("ultimoResponsableMP", responsable.value);
+    if (responsable.value !== OTRA) st.kvSet?.("ultimoResponsableMP", responsable.value); // la "otra persona" no se recuerda
     await st.registrarLiberacion(orden, { ...v, acidez: v.acidez ?? 0, i }, decision);
     h.cerrar();
     toast(
