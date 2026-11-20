@@ -139,7 +139,7 @@ let repetir = false;
 // Grupos independientes de la cola: un registro que falla solo detiene a los
 // de su grupo (el orden importa dentro de una recepción), no a los demás.
 // Ej. una temperatura con error ya no deja trabados los pallets.
-const GRUPO = { temperaturas: "Temperaturas", controlPesos: "Control de pesos", parametrosPeso: "Control de pesos", lotes: "Calidad - Planta", registros: "Calidad - Planta" };
+const GRUPO = { temperaturas: "Temperaturas", controlPesos: "Control de pesos", parametrosPeso: "Control de pesos", lotes: "Calidad - Planta", registros: "Calidad - Planta", solicitudes: "Calidad - Planta" };
 const grupoDe = (op) => GRUPO[op.lista] || "Recepción y liberación";
 
 export function sincronizar() {
@@ -1287,6 +1287,7 @@ function aplicarConfig(cfg) {
   if (cfg?.contenedores?.length) CONFIG.contenedores = cfg.contenedores;
   if (cfg?.turnosTemperatura?.length) CONFIG.turnosTemperatura = cfg.turnosTemperatura;
   if (cfg?.ventanasTemperatura) CONFIG.ventanasTemperatura = cfg.ventanasTemperatura;
+  if (cfg?.aprobadores) CONFIG.aprobadores = { ...CONFIG.aprobadores, ...cfg.aprobadores };
   if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
 }
 
@@ -1443,6 +1444,101 @@ export async function completarParada(registro, extra) {
   if (!registro.ID || !Object.keys(campos).length) return false;
   await encolar({ tipo: "update", lista: "registros", id: registro.ID, campos });
   return true;
+}
+
+// ---------------- solicitudes de modificación ----------------
+// Un registro ya guardado no se cambia libremente: quien no es aprobador del
+// módulo pide el cambio con justificación (lista SolicitudesModificacion) y un
+// aprobador lo aplica o lo rechaza. Los aprobadores pueden editar directo, pero
+// igual queda la constancia (Directa = sí) con su justificación.
+
+export async function registroPorId(id) {
+  return (await api.items("registros", { where: [["ID", "eq", id]], top: 1 }))[0] || null;
+}
+
+export const NOMBRES_MODULO = { planta: "Calidad - Planta" };
+
+export function esAprobador(modulo, correo = usuario?.correo) {
+  const c = (correo || "").toLowerCase();
+  return c === CONFIG.administrador || (CONFIG.aprobadores?.[modulo] || []).some((x) => x.toLowerCase() === c);
+}
+
+const fmtValor = (v) => (v === null || v === undefined || v === "" ? "—" : typeof v === "number" ? String(Math.round(v * 1000) / 1000).replace(".", ",") : String(v));
+export const resumenCambios = (cambios) => cambios.map((c) => `${c.etiqueta}: ${fmtValor(c.antes)} → ${fmtValor(c.despues)}`).join("\n");
+
+async function solicitudesLocales() {
+  return (await idb.getAll("outbox")).filter((o) => o.lista === "solicitudes" && o.tipo === "add").map((o) => ({ ...o.campos, pendienteSubir: true }));
+}
+
+export async function solicitudesPendientes(modulo) {
+  let rows = [];
+  try {
+    rows = await api.items("solicitudes", { where: [["Modulo", "eq", modulo], ["Estado", "eq", "Pendiente"]], orderby: "ID asc", top: 500 });
+    await kv.set(`cache:solicitudes:${modulo}`, rows);
+  } catch {
+    rows = await kv.get(`cache:solicitudes:${modulo}`, []);
+  }
+  const resueltas = new Set((await idb.getAll("outbox")).filter((o) => o.lista === "solicitudes" && o.tipo === "update").map((o) => o.id));
+  const locales = (await solicitudesLocales()).filter((s) => s.Modulo === modulo && s.Estado === "Pendiente" && !rows.some((r) => r.Title === s.Title));
+  return [...rows.filter((r) => !resueltas.has(r.ID)), ...locales];
+}
+
+export async function solicitudesRecientes(modulo, dias = 45) {
+  const desde = new Date(Date.now() - dias * 86400000);
+  return api.items("solicitudes", { where: [["Modulo", "eq", modulo], ["Created", "ge", desde]], orderby: "ID desc", top: 500 });
+}
+
+const nuevoCodigo = () => `SM-${Date.now().toString(36).toUpperCase()}`;
+
+// cambios: [{ campo (propiedad SharePoint), etiqueta, antes, despues }]
+export async function solicitarModificacion({ modulo, lista, item, referencia, cambios, justificacion }) {
+  const Title = nuevoCodigo();
+  await encolar({
+    tipo: "add",
+    lista: "solicitudes",
+    clave: [["Title", "eq", Title]],
+    campos: {
+      Title, Modulo: modulo, Lista: lista, ItemID: item.ID, Referencia: referencia,
+      Cambios: JSON.stringify(cambios), Resumen: resumenCambios(cambios), Justificacion: justificacion,
+      Solicitante: usuario?.nombre || "", SolicitanteCorreo: usuario?.correo || "", Estado: "Pendiente",
+    },
+  });
+  return Title;
+}
+
+// Aprobar aplica los valores "después" sobre el registro; rechazar no lo toca.
+export async function resolverSolicitud(sol, aprobar, comentario = "") {
+  if (!esAprobador(sol.Modulo)) throw new Error("Esta cuenta no puede aprobar cambios de este módulo.");
+  if (aprobar) {
+    const cambios = JSON.parse(sol.Cambios || "[]");
+    const campos = Object.fromEntries(cambios.map((c) => [c.campo, c.despues === "" ? null : c.despues]));
+    if (Object.keys(campos).length) await encolar({ tipo: "update", lista: sol.Lista, id: sol.ItemID, campos });
+  }
+  await encolar({
+    tipo: "update",
+    lista: "solicitudes",
+    id: sol.ID,
+    campos: { Estado: aprobar ? "Aprobada" : "Rechazada", Resolutor: usuario?.nombre || usuario?.correo || "", FechaResolucion: new Date().toISOString(), ComentarioResolucion: comentario || null },
+  });
+}
+
+// Edición directa de un aprobador: se aplica y queda la constancia.
+export async function editarDirecto({ modulo, lista, item, referencia, cambios, justificacion }) {
+  if (!esAprobador(modulo)) throw new Error("Esta cuenta no puede editar directamente: envía una solicitud.");
+  const campos = Object.fromEntries(cambios.map((c) => [c.campo, c.despues === "" ? null : c.despues]));
+  await encolar({ tipo: "update", lista, id: item.ID, campos });
+  const Title = nuevoCodigo();
+  await encolar({
+    tipo: "add",
+    lista: "solicitudes",
+    clave: [["Title", "eq", Title]],
+    campos: {
+      Title, Modulo: modulo, Lista: lista, ItemID: item.ID, Referencia: referencia,
+      Cambios: JSON.stringify(cambios), Resumen: resumenCambios(cambios), Justificacion: justificacion,
+      Solicitante: usuario?.nombre || "", SolicitanteCorreo: usuario?.correo || "", Estado: "Aprobada",
+      Resolutor: usuario?.nombre || usuario?.correo || "", FechaResolucion: new Date().toISOString(), Directa: true,
+    },
+  });
 }
 
 // ¿Le faltan sensorial/controles a esta parada?

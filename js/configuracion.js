@@ -68,6 +68,8 @@ export async function render(vista) {
   const resp = lista(CONFIG.responsablesPlanta);
   const bod = lista(CONFIG.bodegueros);
   const lineas = (t) => [...new Set(t.value.split("\n").map((x) => x.trim()).filter(Boolean))];
+  // ---- aprobadores de modificaciones ----
+  const aprobPlanta = lista(CONFIG.aprobadores?.planta || []);
 
   // ---- contenedores (Temperaturas) ----
   const conts = CONFIG.contenedores.map((c) => ({ ...c }));
@@ -144,6 +146,8 @@ export async function render(vista) {
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Guardar configuración");
   btn.addEventListener("click", async () => {
     const r = lineas(resp);
+    const ap = lineas(aprobPlanta).map((x) => x.toLowerCase());
+    if (ap.some((x) => !/^[^\s@]+@[^\s@]+\.[a-z]{2,}/i.test(x))) return toast("Aprobadores: escribe correos válidos, uno por línea", "err");
     const b = lineas(bod);
     if (!r.length || !b.length) return toast("Debe haber al menos un responsable y un bodeguero", "err");
     const cuentas = filas.filter((f) => f.correo);
@@ -172,7 +176,7 @@ export async function render(vista) {
     const accesos = { [CONFIG.administrador]: [...st.MODULOS], ...Object.fromEntries(cuentas.map((f) => [f.correo, st.MODULOS.filter((m) => f.mods.has(m))])) };
     btn.disabled = true;
     try {
-      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas, contenedores: conts, turnosTemperatura: ts.map((x) => x.inicio).sort(), ventanasTemperatura: Object.fromEntries(ts.map((x) => [x.inicio, x.fin])) });
+      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas, contenedores: conts, turnosTemperatura: ts.map((x) => x.inicio).sort(), ventanasTemperatura: Object.fromEntries(ts.map((x) => [x.inicio, x.fin])), aprobadores: { ...CONFIG.aprobadores, planta: ap } });
       toast("Configuración guardada: cada equipo la toma al volver a abrir la app");
     } catch (e) {
       toast("No se pudo guardar en SharePoint: " + e.message, "err");
@@ -193,6 +197,11 @@ export async function render(vista) {
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Responsables de liberación (Calidad - Planta y Control de pesos) · uno por línea"), resp]),
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Bodegueros (iniciales, Bodega) · uno por línea"), bod]),
       el("p", { class: "nota" }, `Registros antiguos con iniciales se muestran con nombre: ${Object.entries(CONFIG.inicialesHistoricas).map(([k, v]) => `${k} = ${v}`).join(" · ")}. Quitar a alguien no borra sus registros.`),
+    ]),
+    el("section", { class: "card config" }, [
+      el("h2", {}, "Aprobadores de modificaciones"),
+      el("p", { class: "nota" }, "Un registro ya guardado no se cambia libremente: el analista pide el cambio con su justificación y una de estas cuentas lo aprueba o lo rechaza. Estas cuentas también pueden editar directamente (queda constancia con su justificación). Sistemas siempre puede."),
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Calidad - Planta (paradas de liberación en proceso) · un correo por línea"), aprobPlanta]),
     ]),
     el("section", { class: "card config" }, [
       el("h2", {}, "Contenedores (Temperaturas)"),

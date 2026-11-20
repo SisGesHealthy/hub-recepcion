@@ -18,8 +18,112 @@ export async function render(vista, resto) {
   if (resto[0] === "reporte") return (await import("./reporte.js")).render(vista);
   if (resto[0] === "micro") return pantallaMicroPendiente(vista, cat);
   if (resto[0] === "qr") return (await import("./accesos.js")).render(vista);
+  if (resto[0] === "solicitudes") return pantallaSolicitudes(vista);
   const dia = /^\d{4}-\d{2}-\d{2}$/.test(resto[0] || "") ? resto[0] : st.hoyISO();
   return pantallaDia(vista, dia, cat);
+}
+
+// ---------------- solicitudes de modificación ----------------
+
+// Botón con el número de solicitudes pendientes (se llena al cargar).
+function btnSolicitudes() {
+  const a = el("a", { class: "btn btn-sec", href: "#/planta/solicitudes" }, "📝 Solicitudes");
+  st.solicitudesPendientes("planta")
+    .then((xs) => {
+      if (xs.length) {
+        a.textContent = `📝 Solicitudes (${xs.length})`;
+        if (st.esAprobador("planta")) a.classList.add("btn-amarillo");
+      }
+    })
+    .catch(() => {});
+  return a;
+}
+
+async function pantallaSolicitudes(vista) {
+  const aprobador = st.esAprobador("planta");
+  const pend = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Cargando…"));
+  const hist = el("div", { class: "reporte-wrap" });
+  vista.append(
+    el("div", { class: "cab" }, [
+      el("div", {}, [
+        el("a", { href: `#/planta/${st.hoyISO()}`, class: "volver" }, "← Producción del día"),
+        el("h1", { class: "titulo" }, "Solicitudes de modificación"),
+        el("p", { class: "sub" }, aprobador ? "Revisa cada cambio y su justificación: al aprobar se aplica al registro." : "Cambios pedidos a registros ya guardados. Los aprueba Calidad."),
+      ]),
+    ]),
+    el("h2", {}, "Pendientes"),
+    pend,
+    el("h2", {}, "Últimos 45 días"),
+    hist
+  );
+  let xs = [];
+  try {
+    xs = await st.solicitudesPendientes("planta");
+  } catch (e) {
+    return vacio(pend, "No se pudo leer SharePoint: " + e.message);
+  }
+  clear(pend);
+  if (!xs.length) pend.appendChild(el("div", { class: "vacio chico" }, "No hay solicitudes pendientes. ✓"));
+  for (const sol of xs) {
+    const comentario = el("input", { type: "text", placeholder: "Comentario (obligatorio si rechazas)" });
+    const resolver = async (aprobar) => {
+      if (!aprobar && !comentario.value.trim()) return toast("Escribe por qué se rechaza", "err"), comentario.focus();
+      if (sol.pendienteSubir) return toast("Esta solicitud aún no sube a SharePoint; inténtalo en un momento.", "err");
+      // ¿El registro cambió desde que se pidió?
+      let aviso = "";
+      try {
+        const actual = (await st.registroPorId(sol.ItemID)) || {};
+        const dif = JSON.parse(sol.Cambios || "[]").filter((c) => (actual[c.campo] ?? null) !== (c.antes ?? null) && !(typeof c.antes === "number" && Math.abs((actual[c.campo] ?? 0) - c.antes) < 1e-9));
+        if (dif.length) aviso = `\n\nOjo: desde la solicitud cambió ${dif.map((c) => c.etiqueta).join(", ")} en el registro. Si apruebas, queda el valor solicitado.`;
+      } catch {}
+      if (!(await confirmar(aprobar ? "Aprobar cambio" : "Rechazar cambio", `${sol.Referencia}\n\n${sol.Resumen}${aviso}`, { si: aprobar ? "Aprobar y aplicar" : "Rechazar", peligro: !aprobar }))) return;
+      await st.resolverSolicitud(sol, aprobar, comentario.value.trim());
+      toast(aprobar ? "Cambio aprobado y aplicado" : "Solicitud rechazada");
+      await st.subirAhora();
+      location.reload();
+    };
+    pend.appendChild(
+      el("article", { class: "orden solicitud" }, [
+        el("div", { class: "orden-info" }, [
+          el("strong", { class: "orden-prov" }, `${sol.Title} · ${sol.Referencia || ""}`),
+          el("span", { class: "orden-fecha" }, `Pide: ${sol.Solicitante || sol.SolicitanteCorreo || "—"}${sol.Created ? ` · ${st.fmtDia(st.diaISO(sol.Created))} ${st.fmtHora(sol.Created)}` : ""}${sol.pendienteSubir ? " · ↻ subiendo" : ""}`),
+          el("pre", { class: "sol-cambios" }, sol.Resumen || ""),
+          el("p", { class: "sol-just" }, ["Justificación: ", el("b", {}, sol.Justificacion || "—")]),
+        ]),
+        aprobador
+          ? el("div", { class: "sol-acciones" }, [
+              comentario,
+              el("div", { class: "fila-botones" }, [
+                el("button", { class: "btn btn-sec", onclick: () => resolver(false) }, "Rechazar"),
+                el("button", { class: "btn btn-verde", onclick: () => resolver(true) }, "Aprobar"),
+              ]),
+            ])
+          : el("span", { class: "estado estado-ambar" }, "Esperando aprobación"),
+      ])
+    );
+  }
+  try {
+    const rec = (await st.solicitudesRecientes("planta")).filter((x) => x.Estado !== "Pendiente");
+    if (!rec.length) return hist.appendChild(el("p", { class: "nota" }, "Sin solicitudes resueltas en este período."));
+    hist.appendChild(
+      el("table", { class: "doc-tabla" }, [
+        el("tr", {}, ["Código", "Registro", "Cambios", "Justificación", "Pidió", "Estado", "Resolvió"].map((x) => el("th", {}, x))),
+        ...rec.map((x) =>
+          el("tr", {}, [
+            el("td", {}, x.Title),
+            el("td", {}, x.Referencia || ""),
+            el("td", {}, el("pre", { class: "sol-cambios" }, x.Resumen || "")),
+            el("td", {}, x.Justificacion || ""),
+            el("td", {}, x.Solicitante || ""),
+            el("td", {}, el("span", { class: `estado ${x.Estado === "Aprobada" ? "estado-verde" : "estado-rojo"}` }, x.Directa ? "Edición directa" : x.Estado)),
+            el("td", {}, `${x.Resolutor || ""}${x.FechaResolucion ? ` · ${st.fmtDia(st.diaISO(x.FechaResolucion))}` : ""}${x.ComentarioResolucion ? ` · ${x.ComentarioResolucion}` : ""}`),
+          ])
+        ),
+      ])
+    );
+  } catch (e) {
+    hist.appendChild(el("p", { class: "nota" }, "No se pudo leer el historial: " + e.message));
+  }
 }
 
 // ---------------- microbiología pendiente ----------------
@@ -132,6 +236,7 @@ async function pantallaDia(vista, dia, cat) {
         el("a", { class: "btn btn-sec", href: "#/planta/micro" }, "🧫 Micro pendiente"),
         el("a", { class: "btn btn-sec", href: "#/planta/reporte" }, "📊 Reporte"),
         el("a", { class: "btn btn-sec", href: "#/planta/qr", title: "Códigos QR de acceso directo" }, "▦ QR"),
+        btnSolicitudes(),
       ]),
     ]),
     lista
@@ -307,6 +412,7 @@ async function pantallaLote(vista, id, prodDe) {
   const micro = el("div");
   let paradas = [];
   const extras = new Map(); // registro → extras leídos
+  let solPend = new Map(); // ID de registro → solicitud de cambio pendiente
 
   const rangoTxt = (min, max) => ((min === null || min === undefined) && (max === null || max === undefined) ? "sin rango" : `${min ?? "—"} – ${max ?? "—"}`);
   const pinta = (campo, estado) => {
@@ -428,7 +534,8 @@ async function pantallaLote(vista, id, prodDe) {
   }
 
   async function cargar() {
-    const [srv, pend] = await Promise.all([st.registrosDeLote(lote), st.paradasPendientes(lote.Title)]);
+    const [srv, pend, sols] = await Promise.all([st.registrosDeLote(lote), st.paradasPendientes(lote.Title), st.solicitudesPendientes("planta").catch(() => [])]);
+    solPend = new Map(sols.filter((x) => x.Lista === "registros").map((x) => [x.ItemID, x]));
     paradas = [...srv, ...pend];
     for (const p of paradas) extras.set(p, p.pendiente ? Object.fromEntries(Object.entries(cols).map(([k, prop]) => [k, prop ? p[prop] ?? null : null])) : await st.extrasDe(p));
     paradas.sort((a, b) => (a.field_1 || 0) - (b.field_1 || 0) || (a.Repeticion ? 1 : 0) - (b.Repeticion ? 1 : 0) || (extras.get(a)?.numRep || 0) - (extras.get(b)?.numRep || 0));
@@ -464,9 +571,11 @@ async function pantallaLote(vista, id, prodDe) {
             el(
               "td",
               {},
-              p.ID
-                ? el("button", { class: `btn ${st.paradaIncompleta(ex) ? "btn-amarillo" : "btn-sec"} btn-mini`, type: "button", onclick: () => completar(p) }, st.paradaIncompleta(ex) ? "Completar" : "✎")
-                : ""
+              !p.ID
+                ? ""
+                : solPend.has(p.ID)
+                  ? el("a", { class: "btn btn-sec btn-mini", href: "#/planta/solicitudes", title: solPend.get(p.ID).Resumen || "" }, "⏳ Cambio pendiente")
+                  : el("button", { class: `btn ${st.paradaIncompleta(ex) ? "btn-amarillo" : "btn-sec"} btn-mini`, type: "button", onclick: () => modificar(p) }, st.esAprobador("planta") ? (st.paradaIncompleta(ex) ? "Completar" : "✎ Editar") : st.paradaIncompleta(ex) ? "Solicitar completar" : "Solicitar cambio")
             ),
           ]);
         }),
@@ -474,69 +583,88 @@ async function pantallaLote(vista, id, prodDe) {
     );
   }
 
-  // Completar o corregir sensorial / controles / liberación de una parada ya
-  // guardada. Precarga lo que tenga; si está vacío, lo de otra parada completa
-  // del lote o el último lote del producto. Siempre con confirmación explícita.
-  async function completar(p) {
+  // Cambiar una parada ya guardada (incluida información que faltó): quien no
+  // es aprobador envía una SOLICITUD con justificación; el aprobador (Calidad /
+  // Sistemas, ver Configuración) edita directo y también queda la constancia.
+  async function modificar(p) {
     const ex = extras.get(p) || {};
-    const propios = Object.fromEntries(Object.entries(ex).filter(([, v]) => v));
-    let base = ex;
-    let origen = "esta parada";
-    if (st.paradaIncompleta(ex)) {
-      const ant = paradas.filter((x) => x !== p && !st.paradaIncompleta(extras.get(x))).pop();
-      if (ant) {
-        base = { ...extras.get(ant), ...propios };
-        origen = `la parada ${st.etiquetaParada(ant, extras.get(ant)?.numRep)} de este lote`;
-      } else {
-        const ult = await st.ultimoRegistroDeProducto(prod);
-        const e2 = ult ? await st.extrasDe(ult) : null;
-        if (e2?.color || e2?.pcc1) {
-          base = { ...e2, ...propios };
-          origen = `el último lote de este producto (${ult.Title})`;
-        } else origen = "";
+    const aprobador = st.esAprobador("planta");
+    const etiqueta = st.etiquetaParada(p, ex.numRep);
+    const referencia = `Lote ${lote.Title} · parada ${etiqueta} · ${st.fmtDia(st.diaISO(lote.Fechadeproducci_x00f3_n))}`;
+    // [clave, etiqueta, propiedad SharePoint, tipo, valor actual]
+    const defs = [
+      ["brix", "°Brix", "field_2", "num", p.field_2],
+      ["ph", "pH", "field_3", "num", p.field_3],
+      ["acidez", "Acidez", "field_4", "num", p.field_4],
+      ["viscosidad", "Viscosidad", "field_6", "num", p.field_6],
+      ["recorrido", "Recorrido", "field_5", "num", p.field_5],
+      ["fruta", "% fruta", "field_7", "num", p.field_7],
+      ["color", "Color", cols.color, "txt", ex.color],
+      ["olor", "Olor", cols.olor, CONFIG.opciones.sensorial, ex.olor],
+      ["sabor", "Sabor", cols.sabor, CONFIG.opciones.sensorial, ex.sabor],
+      ["pproDesinf", "PPRO desinfección", cols.pproDesinf, CONFIG.opciones.control, ex.pproDesinf],
+      ["pproFiltrado", "PPRO filtrado", cols.pproFiltrado, CONFIG.opciones.control, ex.pproFiltrado],
+      ["pcc1", "PCC 1 pasteurizado", cols.pcc1, CONFIG.opciones.pcc1, ex.pcc1],
+      ["pcc2", "PCC 2 pernos y tuercas", cols.pcc2, CONFIG.opciones.control, ex.pcc2],
+      ["liberacion", "Liberación", cols.liberacion, CONFIG.opciones.liberacion, ex.liberacion],
+      ["incidente", "Detalle del incidente", cols.incidente, "area", ex.incidente],
+      ["correcciones", "Correcciones", cols.correcciones, "area", ex.correcciones],
+      ["responsable", "Responsable", "field_9", [...new Set([st.nombreResponsable(p.field_9), ...CONFIG.responsablesPlanta].filter(Boolean))], st.nombreResponsable(p.field_9)],
+      ["obs", "Observaciones", "Observaciones", "txt", p.Observaciones],
+    ].filter((d) => d[2]);
+    const entradas = defs.map(([k, label, prop, tipoD, actual]) => {
+      if (tipoD === "num") {
+        const c = campoNum(label, { valor: actual ?? "" });
+        return { k, label, prop, tipoD, actual, wrap: c.wrap, leer: () => c.val() };
       }
-    }
-    const c = el("input", { type: "text", value: base.color || "", placeholder: "OK o código Pantone" });
-    const mk = (ops, v) => {
-      const x = sel(ops);
-      x.value = v || "";
-      return x;
-    };
-    const o = mk(CONFIG.opciones.sensorial, base.olor || "OK");
-    const sa = mk(CONFIG.opciones.sensorial, base.sabor || "OK");
-    const d = mk(CONFIG.opciones.control, base.pproDesinf);
-    const f = mk(CONFIG.opciones.control, base.pproFiltrado);
-    const p1 = mk(CONFIG.opciones.pcc1, base.pcc1);
-    const p2 = mk(CONFIG.opciones.control, base.pcc2);
-    const lib = mk(CONFIG.opciones.liberacion, ex.liberacion || "Liberado");
-    const inc = el("textarea", { rows: "2" }, ex.incidente || "");
-    const cor = el("textarea", { rows: "2" }, ex.correcciones || "");
-    const ok = el("input", { type: "checkbox" });
-    const b = el("button", { class: "btn btn-verde btn-xl" }, "Guardar");
-    const h = hoja(`Completar parada ${st.etiquetaParada(p, ex.numRep)}`, [
-      el("p", { class: "sub" }, `°Bx ${p.field_2 ?? "—"} · pH ${p.field_3 ?? "—"} · acidez ${p.field_4 ?? "—"} · ${st.nombreResponsable(p.field_9)}`),
-      el("fieldset", { class: "bloque-confirmar" }, [
-        el("legend", {}, "Sensorial y controles"),
-        el("span", { class: "sugerido" }, origen ? `Precargado de ${origen}. Revísalo antes de confirmar.` : "Sin datos anteriores: completa los campos."),
-        el("div", { class: "campos-3" }, [el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Color"), c]), campoSel("Olor", o), campoSel("Sabor", sa)]),
-        el("div", { class: "campos-2" }, [campoSel("PPRO desinfección", d), campoSel("PPRO filtrado", f), campoSel("PCC 1 pasteurizado", p1), campoSel("PCC 2 pernos y tuercas", p2)]),
-        el("label", { class: "check confirmar" }, [ok, " Revisé y confirmo que estos datos corresponden a ESTA parada"]),
-      ]),
-      el("div", { class: "campos-2" }, [campoSel("Liberación", lib)]),
-      el("div", { class: "campos-2" }, [campoSel("Detalle del incidente", inc), campoSel("Correcciones", cor)]),
-      b,
-    ]);
-    b.addEventListener("click", async () => {
-      if (!ok.checked) return toast("Marca la confirmación de sensorial y controles", "err");
-      if (!c.value.trim() || !d.value || !f.value || !p1.value || !p2.value) return toast("Completa color y los controles PPRO/PCC", "err");
-      if (lib.value !== "Liberado" && !cor.value.trim()) return toast("Indica la corrección aplicada (parada no liberada)", "err");
-      b.disabled = true;
-      await st.completarParada(p, {
-        color: c.value.trim(), olor: o.value, sabor: sa.value, pproDesinf: d.value, pproFiltrado: f.value, pcc1: p1.value, pcc2: p2.value,
-        liberacion: lib.value, incidente: lib.value === "Liberado" ? "" : inc.value.trim(), correcciones: lib.value === "Liberado" ? "" : cor.value.trim(),
-      });
+      let x;
+      if (Array.isArray(tipoD)) {
+        x = sel(tipoD);
+        x.value = actual ?? "";
+      } else if (tipoD === "area") x = el("textarea", { rows: "2" }, actual ?? "");
+      else x = el("input", { type: "text", value: actual ?? "" });
+      const vacio = actual === null || actual === undefined || actual === "";
+      return { k, label, prop, tipoD, actual, wrap: el("label", { class: `campo ${vacio ? "campo-vacio" : ""}` }, [el("span", { class: "campo-label" }, label), x]), leer: () => (x.value.trim() === "" ? null : x.value.trim()) };
+    });
+    const igual = (a, b) => (a ?? null) === (b ?? null) || (typeof a === "number" && typeof b === "number" && Math.abs(a - b) < 1e-9);
+    const just = el("textarea", { rows: "3", placeholder: "¿Por qué se cambia? (ej. faltó registrar el PCC 1; dato tomado del registro físico de la línea)" });
+    const btnG = el("button", { class: "btn btn-verde btn-xl" }, aprobador ? "Guardar cambio" : "Enviar solicitud");
+    const vacios = entradas.filter((e) => e.actual === null || e.actual === undefined || e.actual === "").length;
+    const h = hoja(aprobador ? `Editar parada ${etiqueta}` : `Solicitar cambio · parada ${etiqueta}`, [
+      el("p", { class: "sub" }, referencia),
+      el("p", { class: "nota" }, aprobador
+        ? "Eres aprobador de Calidad - Planta: el cambio se aplica al guardar y queda registrado con tu justificación."
+        : "El cambio NO se aplica todavía: se envía a Calidad para su aprobación con tu justificación."),
+      vacios ? el("p", { class: "nota" }, `Los campos resaltados están vacíos en el registro (${vacios}).`) : null,
+      el("div", { class: "campos-3" }, entradas.filter((e) => e.tipoD === "num").map((e) => e.wrap)),
+      el("div", { class: "campos-2" }, entradas.filter((e) => e.tipoD !== "num").map((e) => e.wrap)),
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Justificación (obligatoria)"), just]),
+      btnG,
+    ], { ancho: 720 });
+    btnG.addEventListener("click", async () => {
+      const cambios = entradas
+        .map((e) => ({ campo: e.prop, etiqueta: e.label, antes: e.actual ?? null, despues: e.leer() }))
+        .filter((c) => !igual(c.antes, c.despues));
+      // Si cambia °Bx o acidez, el ratio se recalcula.
+      const vB = cambios.find((c) => c.campo === "field_2")?.despues ?? p.field_2;
+      const vA = cambios.find((c) => c.campo === "field_4")?.despues ?? p.field_4;
+      if (cambios.some((c) => c.campo === "field_2" || c.campo === "field_4")) {
+        const r = vB && vA ? Math.round((vB / vA) * 100) / 100 : null;
+        if (!igual(r, p.field_8)) cambios.push({ campo: "field_8", etiqueta: "Ratio", antes: p.field_8 ?? null, despues: r });
+      }
+      if (!cambios.length) return toast("No cambiaste ningún dato", "err");
+      if (just.value.trim().length < 10) return toast("Escribe la justificación (al menos una frase)", "err"), just.focus();
+      btnG.disabled = true;
+      const datos = { modulo: "planta", lista: "registros", item: p, referencia, cambios, justificacion: just.value.trim() };
+      try {
+        if (aprobador) await st.editarDirecto(datos);
+        else await st.solicitarModificacion(datos);
+      } catch (e) {
+        btnG.disabled = false;
+        return toast(e.message, "err");
+      }
       h.cerrar();
-      toast(`Parada ${st.etiquetaParada(p, ex.numRep)} completada`);
+      toast(aprobador ? "Cambio guardado y registrado" : "Solicitud enviada a Calidad para aprobación");
       await st.subirAhora();
       await cargar();
     });

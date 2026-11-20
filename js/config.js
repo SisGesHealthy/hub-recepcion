@@ -40,6 +40,7 @@ export const CONFIG = {
       parametrosPeso: "Lists/ParametrosPeso", // Control de pesos: nominal/mín/máx por producto
       controlPesos: "Lists/ControlPesos", // Control de pesos: una fila por visita
       temperaturas: "Lists/TemperaturasContenedores", // Temperaturas: una fila por contenedor y turno
+      solicitudes: "Lists/SolicitudesModificacion", // cambios a registros ya guardados: justificación + aprobación
     },
   },
 
@@ -54,6 +55,12 @@ export const CONFIG = {
   // Códigos de formato aprobados por el Sistema de Gestión (encabezado al imprimir).
   formatos: {
     controlPesos: { codigo: "M.ASC.02R06", version: "0", fecha: "13/1/2025" },
+  },
+
+  // Quién aprueba (o edita directamente) los cambios a registros ya guardados,
+  // por módulo. Sistemas (administrador) siempre puede. Se edita en Configuración.
+  aprobadores: {
+    planta: ["calidad@healthyfood.com.ec", "sistemasdegestion@healthyfood.com.ec"],
   },
 
   // Hub Averías (otra app, integrada en el módulo "averias").
