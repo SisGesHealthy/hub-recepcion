@@ -326,27 +326,62 @@ function cargarResultado(l, alTerminar) {
 }
 
 // ---------------- registro M.ASC.02R04 (sin digitar dos veces) ----------------
+// Igual que el Reporte de liberaciones de Planta: rango de fechas, "Copiar
+// filas" (sin encabezados, para pegar debajo de lo que ya tiene el Excel) y R
+// como correlativo fijo de la liberación (no se renumera con el filtro).
 async function pantallaRegistro(vista) {
-  const dias = el("select", { class: "dias" }, [["7", "Últimos 7 días"], ["30", "Últimos 30 días"], ["90", "Últimos 90 días"]].map(([v, t]) => el("option", { value: v, ...(v === "30" ? { selected: "" } : {}) }, t)));
+  const hoy = st.hoyISO();
+  const desde = el("input", { type: "date", class: "dias", value: st.sumarDias(hoy, -6) });
+  const hasta = el("input", { type: "date", class: "dias", value: hoy });
+  const estado = el("p", { class: "sub" });
   const cont = el("div", { class: "tabla-scroll" }, el("div", { class: "cargando" }, "Armando el registro…"));
   let filas = [];
-  const copiar = (sep) => {
-    if (!filas.length) return;
+  const texto = (sep, encabezados) => {
     const cols = Object.keys(filas[0]);
-    const esc = (v) => { const t = typeof v === "number" ? String(v).replace(".", sep === "\t" ? "," : ".") : String(v ?? ""); return sep === "," && /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t.replace(/\t|\n/g, " "); };
-    const txt = [cols.join(sep), ...filas.map((f) => cols.map((c) => esc(f[c])).join(sep))].join("\n");
-    navigator.clipboard.writeText(txt).then(() => toast(sep === "\t" ? "Copiado: pégalo en el Excel M.ASC.02R04" : "Copiado en CSV"));
+    const esc = (v) => { const t = typeof v === "number" ? String(v).replace(".", sep === "\t" ? "," : ".") : String(v ?? ""); return sep === ";" && /[";\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t.replace(/\t|\r?\n/g, " "); };
+    return [...(encabezados ? [cols.join(sep)] : []), ...filas.map((f) => cols.map((c) => esc(f[c])).join(sep))].join("\r\n");
+  };
+  const copiar = async (encabezados) => {
+    if (!filas.length) return toast("No hay filas para copiar", "err");
+    const txt = texto("\t", encabezados);
+    try {
+      await navigator.clipboard.writeText(txt);
+    } catch {
+      const t = el("textarea", {}, txt);
+      document.body.appendChild(t);
+      t.select();
+      document.execCommand("copy");
+      t.remove();
+    }
+    toast(`${filas.length} filas copiadas${encabezados ? " con encabezados" : ""}: pega en la columna A de la primera fila libre del M.ASC.02R04 (Ctrl+V)`);
+  };
+  const descargar = () => {
+    if (!filas.length) return toast("No hay filas", "err");
+    const a = el("a", { href: URL.createObjectURL(new Blob(["\ufeff" + texto(";", true)], { type: "text/csv;charset=utf-8" })), download: `Registro_recepcion_MP_${desde.value}_${hasta.value}.csv` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   };
   vista.append(
     el("div", { class: "cab" }, [
       el("div", {}, [el("a", { href: "#/calidad", class: "volver" }, "← Liberación"), el("h1", { class: "titulo" }, "Registro de recepción de fruta · M.ASC.02R04"), el("p", { class: "sub" }, "Se arma solo con la liberación de Calidad y el cierre de Bodega")]),
-      el("div", { class: "fila-botones" }, [dias, el("button", { class: "btn btn-sec", onclick: () => copiar("\t") }, "Copiar para Excel"), el("button", { class: "btn btn-sec", onclick: () => copiar(",") }, "Copiar CSV")]),
     ]),
+    el("div", { class: "filtros-reporte" }, [
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Desde"), desde]),
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Hasta"), hasta]),
+      el("button", { class: "btn btn-azul", onclick: () => cargar() }, "Ver"),
+      el("button", { class: "btn btn-verde", onclick: () => copiar(false) }, "📋 Copiar filas"),
+      el("button", { class: "btn btn-sec", onclick: () => copiar(true) }, "Copiar con encabezados"),
+      el("button", { class: "btn btn-sec", onclick: descargar }, "⬇ Excel (CSV)"),
+    ]),
+    estado,
     cont
   );
   async function cargar() {
+    if (desde.value > hasta.value) return toast("La fecha 'desde' es posterior a 'hasta'", "err");
     cont.replaceChildren(el("div", { class: "cargando" }, "Armando el registro…"));
-    try { filas = await st.registroRecepcionMP(Number(dias.value)); } catch (e) { return vacio(cont, "No se pudo leer SharePoint: " + e.message); }
+    try { filas = await st.registroRecepcionMP(desde.value, hasta.value); } catch (e) { filas = []; return vacio(cont, "No se pudo leer SharePoint: " + e.message); }
+    estado.textContent = `${filas.length} liberacion${filas.length === 1 ? "" : "es"} · del ${st.fmtDia(desde.value)} al ${st.fmtDia(hasta.value)}${filas.length ? ` · R ${filas[0].R} a ${filas[filas.length - 1].R}` : ""}`;
     if (!filas.length) return vacio(cont, "Sin liberaciones en ese período.");
     const cols = Object.keys(filas[0]);
     cont.replaceChildren(el("table", { class: "tabla-registro" }, [
@@ -354,6 +389,5 @@ async function pantallaRegistro(vista) {
       el("tbody", {}, filas.map((f) => el("tr", { class: /RECHAZ/.test(f["ESTATUS RECIBIDO"]) ? "fila-rech" : /CONDICI/.test(f["ESTATUS RECIBIDO"]) ? "fila-cond" : "" }, cols.map((c) => el("td", {}, String(f[c] ?? "")))))),
     ]));
   }
-  dias.addEventListener("change", cargar);
   cargar();
 }

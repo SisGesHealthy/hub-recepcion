@@ -913,16 +913,32 @@ export async function cargarMicroMP(lib, v) {
 }
 
 // ---- Registro M.ASC.02R04 armado desde el Hub (sin digitar dos veces) ----
-export async function registroRecepcionMP(dias = 30) {
-  const filas = await historialLiberaciones(dias);
+// Correlativo R de cada liberación (ID → número), en orden de liberación.
+async function numeracionLiberaciones() {
+  const fecha = (l) => new Date(l.HoraCierre || l.Created).getTime();
+  const libs = (await api.items("liberaciones", { select: ["ID", "HoraCierre", "Created"], orderby: "ID asc", top: 5000 })).sort((a, b) => fecha(a) - fecha(b) || a.ID - b.ID);
+  const ancla = new Date(diaASP(CONFIG.registroMP.anclaFecha)).getTime();
+  let i0 = libs.findIndex((l) => fecha(l) >= ancla);
+  if (i0 < 0) i0 = libs.length;
+  return new Map(libs.map((l, i) => [l.ID, CONFIG.registroMP.anclaNumero + (i - i0)]));
+}
+
+// desde / hasta: días "AAAA-MM-DD" (fecha de liberación, hora de Ecuador).
+export async function registroRecepcionMP(desde, hasta) {
+  const dias = Math.max(1, Math.ceil((Date.now() - new Date(diaASP(desde)).getTime()) / 86400000) + 1);
+  const [todas, numero] = await Promise.all([historialLiberaciones(dias), numeracionLiberaciones()]);
+  const filas = todas.filter((h) => {
+    const d = diaISO(h.lib.HoraCierre || h.lib.Created);
+    return d >= desde && d <= hasta;
+  });
   const x = (v) => (v === "Sí" ? "SÍ" : v === "No" ? "NO" : v ?? "");
-  return filas.slice().reverse().map((h, n) => {
+  return filas.slice().reverse().map((h) => {
     const l = h.lib, r = h.recepciones.find((q) => q.Estado === "Finalizada") || h.recepciones[0] || {};
     const estatus = l.Estado === "Rechazado" ? (h.netoRecibido ? "RECHAZADO (SE RECIBIÓ LO CONFORME)" : "RECHAZADO") : l.Condicionado === "Sí" ? "LIBERADO CON CONDICIÓN" : "LIBERADO";
     const micro = l.AnalisisMicro !== "Sí" ? "N/A" : l.MicroFecha ? `Aer ${l.MicroAerobios ?? "-"} · M/L ${l.MicroMohosLevaduras ?? "-"} · Col ${l.MicroColiformes ?? "-"} · E.coli ${l.MicroEColi ?? "-"} · Salm ${l.MicroSalmonella ?? "-"}` : "PENDIENTE";
     // Automático: lo que Bodega recibió es fruta conforme; si Calidad rechazó, hubo fruta no conforme.
     return {
-      R: n + 1,
+      R: numero.get(l.ID) ?? "",
       Fecha: fmtFecha(l.HoraCierre || l.Created, false),
       LOTE: r.Lote || "",
       "Cantidad en Kg": h.netoRecibido ?? "",

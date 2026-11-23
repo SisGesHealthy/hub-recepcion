@@ -63,6 +63,11 @@ export const CONFIG = {
     planta: ["calidad@healthyfood.com.ec", "sistemasdegestion@healthyfood.com.ec"],
   },
 
+  // Registro M.ASC.02R04: la columna R es un correlativo fijo de las
+  // liberaciones de MP (no cambia con el filtro). Ancla: la primera liberación
+  // del 20/11/2026 es la n.º 954; las demás se cuentan en orden de liberación.
+  registroMP: { anclaFecha: "2026-11-20", anclaNumero: 954 },
+
   // Hub Averías (otra app, integrada en el módulo "averias").
   averias: { url: "https://hub-averias.mttohealthy.workers.dev/" },
 
