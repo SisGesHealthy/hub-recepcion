@@ -1304,6 +1304,7 @@ function aplicarConfig(cfg) {
   if (cfg?.turnosTemperatura?.length) CONFIG.turnosTemperatura = cfg.turnosTemperatura;
   if (cfg?.ventanasTemperatura) CONFIG.ventanasTemperatura = cfg.ventanasTemperatura;
   if (cfg?.aprobadores) CONFIG.aprobadores = { ...CONFIG.aprobadores, ...cfg.aprobadores };
+  if (Array.isArray(cfg?.cuentasCalidad)) CONFIG.cuentasCalidad = cfg.cuentasCalidad;
   if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
 }
 
@@ -1556,6 +1557,15 @@ export async function editarDirecto({ modulo, lista, item, referencia, cambios, 
     },
   });
 }
+
+// ¿Es una cuenta de Calidad (o Sistemas)? Ver CONFIG.cuentasCalidad.
+export function esCalidad(correo = usuario?.correo) {
+  const c = (correo || "").toLowerCase();
+  return c === CONFIG.administrador || (CONFIG.cuentasCalidad || []).some((x) => x.toLowerCase() === c);
+}
+
+// Parada registrada sin sensorial/controles (la llenó Producción): Calidad los completa.
+export const pendienteCalidad = (ex) => !ex || !ex.color || !ex.pproDesinf || !ex.pproFiltrado || !ex.pcc1 || !ex.pcc2;
 
 // ¿Le faltan sensorial/controles a esta parada?
 export const paradaIncompleta = (ex) => !ex || !ex.color || !ex.pproDesinf || !ex.pproFiltrado || !ex.pcc1 || !ex.pcc2 || !ex.liberacion;

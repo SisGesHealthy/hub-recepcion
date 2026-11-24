@@ -446,7 +446,7 @@ async function pantallaLote(vista, id, prodDe) {
   const origenPrecarga = el("span", { class: "sugerido" });
   const confirma = el("input", { type: "checkbox" });
   const bloqueCtrl = el("fieldset", { class: "bloque-confirmar" }, [
-    el("legend", {}, "Sensorial y controles"),
+    el("legend", {}, st.esCalidad() ? "Sensorial y controles" : "Sensorial y controles · lo completa Calidad (opcional)"),
     origenPrecarga,
     el("div", { class: "campos-3" }, [el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Color"), color]), campoSel("Olor", olor), campoSel("Sabor", sabor)]),
     el("div", { class: "campos-2" }, [campoSel("PPRO desinfección", pproD), campoSel("PPRO filtrado", pproF), campoSel("PCC 1 pasteurizado", pcc1), campoSel("PCC 2 pernos y tuercas", pcc2)]),
@@ -506,6 +506,16 @@ async function pantallaLote(vista, id, prodDe) {
   // Precarga de sensorial/controles: parada anterior de este lote o, si es la
   // primera, el último registro del producto. Siempre a confirmar.
   async function precargar() {
+    if (!st.esCalidad()) {
+      // Producción: no se precarga nada (no es su verificación); si lo deja
+      // vacío, la parada queda pendiente para Calidad.
+      for (const x of [color, pproD, pproF, pcc1, pcc2]) x.value = "";
+      olor.value = "OK";
+      sabor.value = "OK";
+      confirma.checked = false;
+      origenPrecarga.textContent = "Opcional para Producción. Si no lo llenas, la parada queda «Pendiente de Calidad» y Calidad lo completa.";
+      return;
+    }
     let base = paradas.length ? paradas[paradas.length - 1] : null;
     let origen = base ? `parada ${st.etiquetaParada(base, extras.get(base)?.numRep)} de este lote` : "";
     let ex = base ? extras.get(base) : null;
@@ -565,7 +575,7 @@ async function pantallaLote(vista, id, prodDe) {
             celda(p.field_3, prod?.field_5, prod?.field_6),
             celda(p.field_4, prod?.field_7, prod?.field_8),
             celda(p.field_8, prod?.field_9, prod?.field_10),
-            el("td", { class: ex.liberacion && ex.liberacion !== "Liberado" ? "fuera" : "" }, ex.liberacion || "—"),
+            el("td", { class: ex.liberacion && ex.liberacion !== "Liberado" ? "fuera" : "" }, [ex.liberacion || "—", p.ID && st.pendienteCalidad(ex) ? el("span", { class: "estado estado-ambar pend-calidad" }, "Pendiente de Calidad") : null]),
             el("td", {}, st.nombreResponsable(p.field_9)),
             el("td", {}, p.pendiente ? "↻" : "✓"),
             el(
@@ -573,6 +583,8 @@ async function pantallaLote(vista, id, prodDe) {
               {},
               !p.ID
                 ? ""
+                : st.pendienteCalidad(ex) && st.esCalidad() && !solPend.has(p.ID)
+                  ? el("button", { class: "btn btn-amarillo btn-mini", type: "button", onclick: () => completarCalidad(p) }, "Completar")
                 : solPend.has(p.ID)
                   ? el("a", { class: "btn btn-sec btn-mini", href: "#/planta/solicitudes", title: solPend.get(p.ID).Resumen || "" }, "⏳ Cambio pendiente")
                   : el("button", { class: `btn ${st.paradaIncompleta(ex) ? "btn-amarillo" : "btn-sec"} btn-mini`, type: "button", onclick: () => modificar(p) }, st.esAprobador("planta") ? (st.paradaIncompleta(ex) ? "Completar" : "✎ Editar") : st.paradaIncompleta(ex) ? "Solicitar completar" : "Solicitar cambio")
@@ -586,6 +598,66 @@ async function pantallaLote(vista, id, prodDe) {
   // Cambiar una parada ya guardada (incluida información que faltó): quien no
   // es aprobador envía una SOLICITUD con justificación; el aprobador (Calidad /
   // Sistemas, ver Configuración) edita directo y también queda la constancia.
+  // Calidad completa sensorial/controles que Producción dejó pendientes. No es
+  // una modificación (solo llena lo vacío), por eso no pasa por solicitud.
+  async function completarCalidad(p) {
+    const ex = extras.get(p) || {};
+    // Precarga: otra parada completa de este lote o el último lote del producto.
+    let base = {};
+    let origen = "";
+    const ant = paradas.filter((x) => x !== p && !st.pendienteCalidad(extras.get(x))).pop();
+    if (ant) {
+      base = extras.get(ant);
+      origen = `la parada ${st.etiquetaParada(ant, extras.get(ant)?.numRep)} de este lote`;
+    } else {
+      const ult = await st.ultimoRegistroDeProducto(prod);
+      const e2 = ult ? await st.extrasDe(ult) : null;
+      if (e2 && !st.pendienteCalidad(e2)) {
+        base = e2;
+        origen = `el último lote de este producto (${ult.Title})`;
+      }
+    }
+    const val = (k) => ex[k] || base[k] || "";
+    const c = el("input", { type: "text", value: val("color"), placeholder: "OK o código Pantone" });
+    const mk = (ops, v) => {
+      const x = sel(ops);
+      x.value = v || "";
+      return x;
+    };
+    const o = mk(CONFIG.opciones.sensorial, ex.olor || base.olor || "OK");
+    const sa = mk(CONFIG.opciones.sensorial, ex.sabor || base.sabor || "OK");
+    const d = mk(CONFIG.opciones.control, val("pproDesinf"));
+    const f = mk(CONFIG.opciones.control, val("pproFiltrado"));
+    const p1 = mk(CONFIG.opciones.pcc1, val("pcc1"));
+    const p2 = mk(CONFIG.opciones.control, val("pcc2"));
+    const ok = el("input", { type: "checkbox" });
+    const b = el("button", { class: "btn btn-verde btn-xl" }, "Guardar");
+    const h = hoja(`Completar parada ${st.etiquetaParada(p, ex.numRep)}`, [
+      el("p", { class: "sub" }, `°Bx ${p.field_2 ?? "—"} · pH ${p.field_3 ?? "—"} · acidez ${p.field_4 ?? "—"} · ${st.nombreResponsable(p.field_9)}`),
+      el("fieldset", { class: "bloque-confirmar" }, [
+        el("legend", {}, "Sensorial y controles (pendiente de Calidad)"),
+        el("span", { class: "sugerido" }, origen ? `Precargado de ${origen}. Revísalo antes de confirmar.` : "Sin datos anteriores: completa los campos."),
+        el("div", { class: "campos-3" }, [el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Color"), c]), campoSel("Olor", o), campoSel("Sabor", sa)]),
+        el("div", { class: "campos-2" }, [campoSel("PPRO desinfección", d), campoSel("PPRO filtrado", f), campoSel("PCC 1 pasteurizado", p1), campoSel("PCC 2 pernos y tuercas", p2)]),
+        el("label", { class: "check confirmar" }, [ok, " Revisé y confirmo que estos datos corresponden a ESTA parada"]),
+      ]),
+      b,
+    ]);
+    b.addEventListener("click", async () => {
+      if (!c.value.trim() || !d.value || !f.value || !p1.value || !p2.value) return toast("Completa color y los controles PPRO/PCC", "err");
+      if (!ok.checked) return toast("Marca la confirmación", "err");
+      // Solo se escriben los campos que estaban vacíos.
+      const nuevos = { color: c.value.trim(), olor: o.value, sabor: sa.value, pproDesinf: d.value, pproFiltrado: f.value, pcc1: p1.value, pcc2: p2.value };
+      const extra = Object.fromEntries(Object.entries(nuevos).filter(([k]) => !ex[k]));
+      b.disabled = true;
+      await st.completarParada(p, extra);
+      h.cerrar();
+      toast(`Parada ${st.etiquetaParada(p, ex.numRep)} completada por Calidad`);
+      await st.subirAhora();
+      await cargar();
+    });
+  }
+
   async function modificar(p) {
     const ex = extras.get(p) || {};
     const aprobador = st.esAprobador("planta");
@@ -723,7 +795,8 @@ async function pantallaLote(vista, id, prodDe) {
     // Se puede registrar primero la medición y completar sensorial/controles
     // después desde la tabla ("Completar"), como trabajaban con la Power App.
     let soloMedicion = false;
-    if (!confirma.checked) {
+    if (!confirma.checked && !st.esCalidad()) soloMedicion = true;
+    else if (!confirma.checked) {
       soloMedicion = await confirmar(
         "¿Guardar solo la medición?",
         "Sensorial y controles (PPRO/PCC) quedarán PENDIENTES en esta parada. Podrás completarlos luego con «Completar» en la tabla de paradas.",

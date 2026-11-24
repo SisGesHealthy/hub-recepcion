@@ -59,6 +59,10 @@ export const CONFIG = {
 
   // Quién aprueba (o edita directamente) los cambios a registros ya guardados,
   // por módulo. Sistemas (administrador) siempre puede. Se edita en Configuración.
+  // Cuentas de Calidad en Liberación en proceso: para ellas sensorial y
+  // controles (PPRO/PCC) son obligatorios. Para el resto (ej. Producción) son
+  // opcionales y quedan "pendientes de Calidad". Se edita en Configuración.
+  cuentasCalidad: ["calidad@healthyfood.com.ec", "calidad2@healthyfood.com.ec"],
   aprobadores: {
     planta: ["calidad@healthyfood.com.ec", "sistemasdegestion@healthyfood.com.ec"],
   },
