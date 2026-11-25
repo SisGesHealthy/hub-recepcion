@@ -101,9 +101,12 @@ function pintarBarra() {
   const barra = document.getElementById("barra");
   clear(barra);
   const chip = el("button", { class: "sync-chip", onclick: () => detalleSync() });
+  // Acceso rápido a los registros M.ASC.02R04 / R05 (solo consulta).
+  const verRegistros = puedeVerRegistros(u) ? el("a", { class: "btn btn-sec btn-mini barra-registros", href: "#/registros/r04", title: "Registros M.ASC.02R04 y R05 (consulta)" }, "📊 Registros") : null;
   barra.append(
     el("a", { href: "#/", class: "barra-marca" }, [el("img", { src: "icons/logo.png", alt: "" }), el("span", {}, "Recepción y Liberación")]),
     el("div", { class: "barra-der" }, [
+      verRegistros,
       chip,
       CONFIG.useMock
         ? el(
@@ -155,6 +158,11 @@ async function rutear() {
   const [, seccion, ...resto] = (location.hash || "#/").replace(/^#/, "").split("/");
   window.scrollTo(0, 0);
   if (!seccion) return inicio(u);
+  if (seccion === "registros") {
+    if (!puedeVerRegistros(u)) return sinAcceso(u);
+    clear(vista);
+    return (await import("./registros.js")).render(vista, resto);
+  }
   if (!u.accesos.includes(seccion)) return sinAcceso(u);
   clear(vista);
   if (seccion === "bodega") (await import("./bodega.js")).render(vista, resto);
@@ -192,6 +200,9 @@ function inicio(u) {
     ])
   );
 }
+
+// Registros de Calidad: los ven quienes tienen Calidad, Calidad - Planta o Configuración.
+const puedeVerRegistros = (u) => ["calidad", "planta", "config"].some((m) => u.accesos.includes(m));
 
 function sinAcceso(u) {
   clear(vista);
