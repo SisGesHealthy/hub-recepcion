@@ -144,6 +144,39 @@ export async function render(vista) {
   pintarTurnos();
   const agregarTurno = el("button", { class: "btn btn-sec", type: "button", onclick: () => (turnosEd.push({ inicio: "", fin: "" }), pintarTurnos()) }, "+ Agregar turno");
 
+  // ---- revisión de permisos de SharePoint por cuenta ----
+  const NOMBRE_LISTA = { documentos: "Documentos (config.)", ordenes: "Órdenes de recepción", liberaciones: "Liberaciones", pallets: "Pallets", recepciones: "Recepciones", lotes: "Lotes", registros: "Registros", catalogo: "Catálogo liberación", solicitudes: "Solicitudes modif.", controlPesos: "Control pesos", parametrosPeso: "Parámetros peso", temperaturas: "Temperaturas" };
+  const permisosOut = el("div", { class: "reporte-wrap" });
+  const btnPermisos = el("button", { class: "btn btn-azul", type: "button" }, "Revisar permisos en SharePoint");
+  btnPermisos.addEventListener("click", async () => {
+    btnPermisos.disabled = true;
+    permisosOut.replaceChildren(el("div", { class: "cargando" }, "Consultando SharePoint cuenta por cuenta…"));
+    let res;
+    try {
+      res = await st.revisarPermisos(Object.keys(CONFIG.accesos).filter((c) => c !== CONFIG.administrador));
+    } catch (e) {
+      btnPermisos.disabled = false;
+      return permisosOut.replaceChildren(el("p", { class: "aviso" }, "No se pudo revisar: " + e.message));
+    }
+    btnPermisos.disabled = false;
+    const listas = [...new Set(res.flatMap((r) => Object.keys(r.listas)))];
+    const celda = (x) => {
+      if (!x) return el("td", { class: "perm-na" }, "");
+      if (x.error) return el("td", { class: "perm-mal", title: x.error }, "⚠");
+      const tiene = x.editar ? "Editar" : x.leer ? "Leer" : "Sin acceso";
+      return el("td", { class: x.ok ? "perm-ok" : "perm-mal", title: `Necesita: ${x.necesita} · tiene: ${tiene}` }, `${x.ok ? "✓" : "✗"} ${tiene}`);
+    };
+    const faltas = res.flatMap((r) => Object.entries(r.listas).filter(([, x]) => !x.ok).map(([l, x]) => `${r.correo}: ${NOMBRE_LISTA[l] || l} (necesita ${x.necesita}${x.error ? ` · ${x.error}` : ""})`));
+    permisosOut.replaceChildren(
+      el("p", { class: faltas.length ? "aviso" : "nota" }, faltas.length ? `${faltas.length} permisos por corregir (en rojo). Se dan en SharePoint: lista → ⚙ Configuración → Permisos de esta lista.` : "Todas las cuentas tienen los permisos que necesitan sus módulos. ✓"),
+      el("table", { class: "doc-tabla tabla-permisos" }, [
+        el("tr", {}, [el("th", {}, "Cuenta"), el("th", {}, "Módulos"), ...listas.map((l) => el("th", {}, NOMBRE_LISTA[l] || l))]),
+        ...res.map((r) => el("tr", {}, [el("td", {}, r.correo), el("td", {}, r.mods.map((m) => NOMBRES[m] || m).join(", ") || "—"), ...listas.map((l) => celda(r.listas[l]))])),
+      ]),
+      faltas.length ? el("ul", { class: "lista-prod" }, faltas.map((f) => el("li", {}, f))) : null
+    );
+  });
+
   const btn = el("button", { class: "btn btn-verde btn-xl" }, "Guardar configuración");
   btn.addEventListener("click", async () => {
     const r = lineas(resp);
@@ -194,6 +227,10 @@ export async function render(vista) {
       el("p", { class: "nota" }, "Marca los módulos que ve cada cuenta Microsoft. Para que pueda GUARDAR datos, la cuenta también necesita permiso «Editar» en las listas de SharePoint de ese módulo."),
       el("div", { class: "reporte-wrap" }, tabla),
       el("div", { class: "fila-botones izq" }, agregar),
+      el("h3", {}, "Permisos en SharePoint"),
+      el("p", { class: "nota" }, "Revisa, para cada cuenta, si tiene en SharePoint el permiso que necesitan los módulos marcados (lo que se ve en la app depende de esta tabla; lo que puede GUARDAR depende de SharePoint). Para ver la app exactamente como otra cuenta, usa «👁 Ver como» en la barra de arriba."),
+      el("div", { class: "fila-botones izq" }, btnPermisos),
+      permisosOut,
     ]),
     el("section", { class: "card config" }, [
       el("h2", {}, "Responsables y bodegueros"),

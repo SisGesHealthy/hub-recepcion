@@ -2,7 +2,7 @@
 
 import { CONFIG } from "./config.js";
 import { el, clear } from "./dom.js";
-import { initStore, setUsuario, getUsuario, onSync, sincronizar, descartarPrimeraOperacion, cargarConfig } from "./store.js";
+import { initStore, setUsuario, getUsuario, onSync, sincronizar, descartarPrimeraOperacion, cargarConfig, verComo } from "./store.js";
 import * as store from "./store.js";
 import { confirmar } from "./ui.js";
 import { iconoBalanza } from "./pesos.js";
@@ -28,6 +28,10 @@ const DEMO_USUARIOS = [
 // Enlace directo (QR, acceso del ícono): si hay que pasar por el inicio de
 // sesión de Microsoft, la página de destino se recuerda y se abre al volver.
 const K_DESTINO = "hub-recepcion:destino";
+const K_VERCOMO = "hub-recepcion:verComo";
+
+// Cuentas configuradas (para "Ver como" y el selector del demo).
+const cuentasConfiguradas = () => [...new Set([...Object.keys(CONFIG.accesos), CONFIG.administrador].map((c) => c.toLowerCase()))].sort();
 try {
   if (location.hash.startsWith("#/") && location.hash.length > 2) sessionStorage.setItem(K_DESTINO, location.hash);
 } catch {}
@@ -50,6 +54,11 @@ async function main() {
   }
   await initStore();
   await cargarConfig();
+  // "Ver como" otra cuenta (solo Sistemas, se guarda en esta pestaña).
+  try {
+    const vc = sessionStorage.getItem(K_VERCOMO);
+    if (vc && getUsuario().correo === CONFIG.administrador) verComo(vc);
+  } catch {}
   pintarBarra();
   try {
     const destino = sessionStorage.getItem(K_DESTINO);
@@ -120,9 +129,29 @@ function pintarBarra() {
                 location.reload();
               },
             },
-            DEMO_USUARIOS.map(([n, c]) => el("option", { value: c, ...(c === u.correo ? { selected: "" } : {}) }, `${n} (demo)`))
+            [...new Set([...DEMO_USUARIOS.map(([, c]) => c), ...cuentasConfiguradas()])].map((c) => {
+              const n = DEMO_USUARIOS.find(([, x]) => x === c)?.[0] || c.split("@")[0];
+              return el("option", { value: c, ...(c === u.correo ? { selected: "" } : {}) }, `${n} (demo)`);
+            })
           )
-        : el("span", { class: "barra-user" }, u.nombre),
+        : u.correo === CONFIG.administrador
+          ? el(
+              "select",
+              {
+                class: "demo-user",
+                title: "Ver la app como otra cuenta (solo cambia lo que se muestra)",
+                onchange: (e) => {
+                  try {
+                    if (e.target.value) sessionStorage.setItem(K_VERCOMO, e.target.value);
+                    else sessionStorage.removeItem(K_VERCOMO);
+                  } catch {}
+                  location.hash = "#/";
+                  location.reload();
+                },
+              },
+              [el("option", { value: "" }, u.nombre), ...cuentasConfiguradas().filter((c) => c !== u.correo).map((c) => el("option", { value: c, ...(c === u.verComo ? { selected: "" } : {}) }, `👁 Ver como ${c}`))]
+            )
+          : el("span", { class: "barra-user" }, u.nombre),
     ])
   );
   onSync((s) => {
@@ -155,6 +184,7 @@ async function detalleSync() {
 
 async function rutear() {
   const u = getUsuario();
+  pintarAvisoVerComo(u);
   const [, seccion, ...resto] = (location.hash || "#/").replace(/^#/, "").split("/");
   window.scrollTo(0, 0);
   if (!seccion) return inicio(u);
@@ -197,6 +227,17 @@ function inicio(u) {
           ])
         )
       ),
+    ])
+  );
+}
+
+function pintarAvisoVerComo(u) {
+  document.getElementById("aviso-vercomo")?.remove();
+  if (!u.verComo) return;
+  document.getElementById("barra").after(
+    el("div", { id: "aviso-vercomo", class: "aviso-vercomo" }, [
+      `👁 Viendo la app como ${u.verComo} (${u.accesos.length ? u.accesos.join(", ") : "sin módulos"}). Solo cambia lo que se muestra: lo que guardes queda con tu cuenta. `,
+      el("button", { class: "btn btn-sec btn-mini", onclick: () => { try { sessionStorage.removeItem(K_VERCOMO); } catch {} location.hash = "#/"; location.reload(); } }, "Volver a mi cuenta"),
     ])
   );
 }

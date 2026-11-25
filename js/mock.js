@@ -33,6 +33,11 @@ async function nextId(lista) {
 }
 
 export const api = {
+  // Demo: todas las cuentas con permiso completo.
+  async permisosDe() {
+    return { leer: true, editar: true };
+  },
+
   async items(lista, { where = [], orderby, top = 5000 } = {}) {
     let rows = (await idb.getAll(S(lista))).filter((it) => where.every((w) => cumple(it, w)));
     if (orderby) {

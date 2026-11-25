@@ -41,6 +41,7 @@ export const CONFIG = {
       controlPesos: "Lists/ControlPesos", // Control de pesos: una fila por visita
       temperaturas: "Lists/TemperaturasContenedores", // Temperaturas: una fila por contenedor y turno
       solicitudes: "Lists/SolicitudesModificacion", // cambios a registros ya guardados: justificación + aprobación
+      documentos: "Documentos compartidos", // biblioteca: configuracion.json y clave de las OF (solo para revisar permisos)
     },
   },
 

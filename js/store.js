@@ -42,6 +42,16 @@ export function setUsuario(nombre, correo) {
 }
 export const getUsuario = () => usuario;
 
+// "Ver como" (solo Sistemas): la app muestra los módulos y botones que vería
+// otra cuenta, para revisar accesos. Lo que se guarde sigue siendo con la
+// cuenta real (es solo la vista).
+export function verComo(correo) {
+  if (!usuario) return;
+  usuario.verComo = correo ? correo.toLowerCase() : null;
+  usuario.accesos = accesosDe(usuario.verComo || usuario.correo);
+}
+const correoVista = () => usuario?.verComo || usuario?.correo;
+
 // ---------------- utilidades ----------------
 
 const TZ = "America/Guayaquil";
@@ -1305,7 +1315,7 @@ function aplicarConfig(cfg) {
         return [k.trim().toLowerCase(), mods];
       })
     );
-    if (usuario) usuario.accesos = accesosDe(usuario.correo);
+    if (usuario) usuario.accesos = accesosDe(usuario.verComo || usuario.correo);
   }
   if (cfg?.responsablesPlanta?.length) CONFIG.responsablesPlanta = cfg.responsablesPlanta;
   if (cfg?.bodegueros?.length) CONFIG.bodegueros = cfg.bodegueros;
@@ -1472,6 +1482,39 @@ export async function completarParada(registro, extra) {
   return true;
 }
 
+// ---------------- revisión de permisos de SharePoint ----------------
+// Listas que necesita cada módulo y con qué nivel.
+export const REQUISITOS = {
+  bodega: { ordenes: "editar", liberaciones: "leer", pallets: "editar", recepciones: "editar" },
+  calidad: { ordenes: "editar", liberaciones: "editar", recepciones: "leer", pallets: "leer" },
+  planta: { lotes: "editar", registros: "editar", catalogo: "leer", solicitudes: "editar" },
+  pesos: { controlPesos: "editar", parametrosPeso: "leer", lotes: "leer", catalogo: "leer" },
+  temp: { temperaturas: "editar" },
+  averias: {},
+  config: { parametrosPeso: "editar", catalogo: "leer" },
+};
+
+// Para cada cuenta: lo que necesita según sus módulos y lo que tiene en SharePoint.
+export async function revisarPermisos(cuentas) {
+  const out = [];
+  for (const correo of cuentas) {
+    const mods = accesosDe(correo);
+    const nec = { documentos: "leer" }; // configuración de accesos y clave de las OF
+    for (const m of mods) for (const [l, n] of Object.entries(REQUISITOS[m] || {})) if (nec[l] !== "editar") nec[l] = n;
+    const listas = {};
+    for (const [l, n] of Object.entries(nec)) {
+      try {
+        const p = await api.permisosDe(l, correo);
+        listas[l] = { necesita: n, ...p, ok: n === "editar" ? p.editar : p.leer };
+      } catch (e) {
+        listas[l] = { necesita: n, error: e.status === 404 ? "cuenta no encontrada en el sitio" : e.message };
+      }
+    }
+    out.push({ correo, mods, listas });
+  }
+  return out;
+}
+
 // ---------------- solicitudes de modificación ----------------
 // Un registro ya guardado no se cambia libremente: quien no es aprobador del
 // módulo pide el cambio con justificación (lista SolicitudesModificacion) y un
@@ -1484,7 +1527,7 @@ export async function registroPorId(id) {
 
 export const NOMBRES_MODULO = { planta: "Calidad - Planta" };
 
-export function esAprobador(modulo, correo = usuario?.correo) {
+export function esAprobador(modulo, correo = correoVista()) {
   const c = (correo || "").toLowerCase();
   return c === CONFIG.administrador || (CONFIG.aprobadores?.[modulo] || []).some((x) => x.toLowerCase() === c);
 }
@@ -1568,7 +1611,7 @@ export async function editarDirecto({ modulo, lista, item, referencia, cambios, 
 }
 
 // ¿Es una cuenta de Calidad (o Sistemas)? Ver CONFIG.cuentasCalidad.
-export function esCalidad(correo = usuario?.correo) {
+export function esCalidad(correo = correoVista()) {
   const c = (correo || "").toLowerCase();
   return c === CONFIG.administrador || (CONFIG.cuentasCalidad || []).some((x) => x.toLowerCase() === c);
 }

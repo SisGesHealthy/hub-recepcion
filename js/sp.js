@@ -78,6 +78,15 @@ function construirQuery({ where = [], orderby, top = 5000, select } = {}) {
 }
 
 export const api = {
+  // Permisos efectivos de una cuenta en una lista (requiere ser dueño del
+  // sitio). Devuelve { leer, editar }.
+  async permisosDe(lista, correo) {
+    const login = encodeURIComponent(`'i:0#.f|membership|${correo}'`);
+    const p = await spFetch(`${listUrl(lista)}/getusereffectivepermissions(@u)?@u=${login}`);
+    const low = Number(p?.Low ?? p?.GetUserEffectivePermissions?.Low ?? 0);
+    return { leer: (low & 0x1) !== 0, editar: (low & 0x4) !== 0 && (low & 0x2) !== 0 };
+  },
+
   async items(lista, q = {}) {
     let url = `${listUrl(lista)}/items${construirQuery(q)}`;
     const out = [];
