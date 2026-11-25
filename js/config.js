@@ -68,9 +68,15 @@ export const CONFIG = {
   },
 
   // Registro M.ASC.02R04: la columna R es un correlativo fijo de las
-  // liberaciones de MP (no cambia con el filtro). Ancla: la primera liberación
-  // del 20/11/2026 es la n.º 954; las demás se cuentan en orden de liberación.
-  registroMP: { anclaFecha: "2026-11-20", anclaNumero: 954 },
+  // liberaciones de MP (no cambia con el filtro). Anclas: la primera liberación
+  // de esa fecha lleva ese número y desde ahí se cuenta en orden de liberación
+  // hasta la siguiente ancla (para cuadrar con el Excel si hubo un salto).
+  registroMP: {
+    anclas: [
+      { fecha: "2026-11-20", numero: 954 },
+      { fecha: "2026-11-23", numero: 961 },
+    ],
+  },
 
   // Hub Averías (otra app, integrada en el módulo "averias").
   averias: { url: "https://hub-averias.mttohealthy.workers.dev/" },

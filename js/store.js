@@ -917,10 +917,19 @@ export async function cargarMicroMP(lib, v) {
 async function numeracionLiberaciones() {
   const fecha = (l) => new Date(l.HoraCierre || l.Created).getTime();
   const libs = (await api.items("liberaciones", { select: ["ID", "HoraCierre", "Created"], orderby: "ID asc", top: 5000 })).sort((a, b) => fecha(a) - fecha(b) || a.ID - b.ID);
-  const ancla = new Date(diaASP(CONFIG.registroMP.anclaFecha)).getTime();
-  let i0 = libs.findIndex((l) => fecha(l) >= ancla);
-  if (i0 < 0) i0 = libs.length;
-  return new Map(libs.map((l, i) => [l.ID, CONFIG.registroMP.anclaNumero + (i - i0)]));
+  // Cada ancla: índice de su primera liberación y número que le corresponde.
+  const anclas = [...CONFIG.registroMP.anclas]
+    .sort((a, b) => a.fecha.localeCompare(b.fecha))
+    .map((a) => {
+      const t = new Date(diaASP(a.fecha)).getTime();
+      const i = libs.findIndex((l) => fecha(l) >= t);
+      return { i: i < 0 ? libs.length : i, numero: a.numero };
+    });
+  // Antes de la primera ancla se cuenta hacia atrás desde ella.
+  return new Map(libs.map((l, i) => {
+    const a = anclas.filter((x) => x.i <= i).pop() || anclas[0];
+    return [l.ID, a.numero + (i - a.i)];
+  }));
 }
 
 // desde / hasta: días "AAAA-MM-DD" (fecha de liberación, hora de Ecuador).
