@@ -7,7 +7,7 @@
 
 import { el, clear } from "./dom.js";
 import * as st from "./store.js";
-import { toast, vacio } from "./ui.js";
+import { toast, vacio, hoja } from "./ui.js";
 
 const REGISTROS = {
   r04: { codigo: "M.ASC.02R04", titulo: "Registro de recepción de fruta", sub: "Por fecha de liberación de Calidad MP" },
@@ -74,7 +74,9 @@ export async function render(vista, resto = []) {
   let cols = [];
   let rows = [];
   let visibles = [];
+  // filtros[i] = { txt, sel: Set de valores marcados | null, desde, hasta }
   let filtros = {};
+  const activo = (f) => !!(f && (f.txt || f.sel || f.desde || f.hasta));
   let orden = { i: null, dir: 1 };
 
   vista.append(
@@ -109,17 +111,98 @@ export async function render(vista, resto = []) {
   buscar.addEventListener("input", () => (clearTimeout(t), (t = setTimeout(pintar, 200))));
 
   const texto = (c, v) => (c.tipo === "n" ? num(v) : c.tipo === "d" ? dmy(v) : String(v ?? ""));
-  // Filtro de una columna: números con >, <, >=, <=, = ; lo demás "contiene".
+  const sinValor = (v) => v === null || v === undefined || v === "";
+  // Filtro de una columna: valores marcados (como el filtro de Excel), rango
+  // desde/hasta en fechas y números, y la casilla de texto: "contiene", o en
+  // números >, <, >=, <=, =.
   const pasa = (c, v, f) => {
-    if (!f) return true;
-    const m = c.tipo === "n" && /^\s*(>=|<=|>|<|=)\s*(-?[\d.,]+)\s*$/.exec(f);
+    if (!activo(f)) return true;
+    if (f.sel && !f.sel.has(texto(c, v) || "(vacío)")) return false;
+    if (f.desde !== undefined && f.desde !== "" && (sinValor(v) || v < f.desde)) return false;
+    if (f.hasta !== undefined && f.hasta !== "" && (sinValor(v) || v > f.hasta)) return false;
+    if (!f.txt) return true;
+    const m = c.tipo === "n" && /^\s*(>=|<=|>|<|=)\s*(-?[\d.,]+)\s*$/.exec(f.txt);
     if (m) {
-      if (v === null || v === undefined || v === "") return false;
+      if (sinValor(v)) return false;
       const n = Number(m[2].replace(",", "."));
       return { ">": v > n, "<": v < n, ">=": v >= n, "<=": v <= n, "=": v === n }[m[1]];
     }
-    return st.norm(texto(c, v)).includes(st.norm(f));
+    return st.norm(texto(c, v)).includes(st.norm(f.txt));
   };
+
+  // Panel de filtro de una columna: desde/hasta + lista de valores con casillas.
+  function panelFiltro(i) {
+    const c = cols[i];
+    const f = { ...(filtros[i] || {}) };
+    // Valores posibles según los OTROS filtros (como Excel).
+    const base = rows.filter((r) => cols.every((cc, j) => j === i || pasa(cc, r[j], filtros[j])));
+    const cuenta = new Map();
+    for (const r of base) {
+      const k = texto(c, r[i]) || "(vacío)";
+      cuenta.set(k, (cuenta.get(k) || 0) + 1);
+    }
+    const valorDe = new Map(base.map((r) => [texto(c, r[i]) || "(vacío)", r[i]]));
+    const claves = [...cuenta.keys()].sort((a, b) => {
+      const va = valorDe.get(a), vb = valorDe.get(b);
+      if (a === "(vacío)") return 1;
+      if (b === "(vacío)") return -1;
+      return c.tipo === "n" ? va - vb : String(va).localeCompare(String(vb), "es", { numeric: true });
+    });
+    const marcados = new Set(f.sel || claves);
+    const tipoInput = c.tipo === "d" ? "date" : c.tipo === "n" ? "number" : null;
+    const desdeI = tipoInput ? el("input", { type: tipoInput, step: "any", value: f.desde ?? "" }) : null;
+    const hastaI = tipoInput ? el("input", { type: tipoInput, step: "any", value: f.hasta ?? "" }) : null;
+    const busca = el("input", { type: "search", class: "obs", placeholder: "Buscar valor…" });
+    const lista = el("div", { class: "filtro-lista" });
+    const pintarLista = () => {
+      clear(lista);
+      const q = st.norm(busca.value);
+      for (const k of claves) {
+        if (q && !st.norm(k).includes(q)) continue;
+        const ck = el("input", { type: "checkbox", ...(marcados.has(k) ? { checked: "" } : {}) });
+        ck.addEventListener("change", () => (ck.checked ? marcados.add(k) : marcados.delete(k)));
+        lista.appendChild(el("label", { class: "filtro-op" }, [ck, el("span", {}, k), el("small", {}, String(cuenta.get(k)))]));
+      }
+    };
+    busca.addEventListener("input", pintarLista);
+    pintarLista();
+    const todos = (on) => {
+      const q = st.norm(busca.value);
+      for (const k of claves) if (!q || st.norm(k).includes(q)) on ? marcados.add(k) : marcados.delete(k);
+      pintarLista();
+    };
+    const aplicar = el("button", { class: "btn btn-verde" }, "Aplicar");
+    const h = hoja(`Filtro · ${c.label}`, [
+      tipoInput
+        ? el("div", { class: "campos-2" }, [
+            el("label", { class: "campo" }, [el("span", { class: "campo-label" }, c.tipo === "d" ? "Desde la fecha" : "Desde (mínimo)"), desdeI]),
+            el("label", { class: "campo" }, [el("span", { class: "campo-label" }, c.tipo === "d" ? "Hasta la fecha" : "Hasta (máximo)"), hastaI]),
+          ])
+        : null,
+      busca,
+      el("div", { class: "fila-botones izq" }, [
+        el("button", { class: "btn btn-sec btn-mini", onclick: () => todos(true) }, "Marcar todos"),
+        el("button", { class: "btn btn-sec btn-mini", onclick: () => todos(false) }, "Desmarcar todos"),
+      ]),
+      lista,
+      el("div", { class: "fila-botones" }, [
+        el("button", { class: "btn btn-sec", onclick: () => (delete filtros[i], h.cerrar(), pintar()) }, "Limpiar filtro"),
+        aplicar,
+      ]),
+    ]);
+    aplicar.addEventListener("click", () => {
+      const nuevo = { txt: f.txt || "" };
+      if (marcados.size < claves.length) nuevo.sel = new Set(marcados);
+      if (tipoInput) {
+        const lee = (x) => (x.value === "" ? "" : c.tipo === "n" ? Number(x.value) : x.value);
+        nuevo.desde = lee(desdeI);
+        nuevo.hasta = lee(hastaI);
+      }
+      filtros[i] = nuevo;
+      h.cerrar();
+      pintar();
+    });
+  }
 
   function calcular() {
     const q = st.norm(buscar.value.trim());
@@ -138,7 +221,7 @@ export async function render(vista, resto = []) {
 
   function pintar() {
     calcular();
-    info.textContent = `${visibles.length} de ${rows.length} filas${Object.values(filtros).some(Boolean) || buscar.value ? " (filtradas)" : ""}`;
+    info.textContent = `${visibles.length} de ${rows.length} filas${Object.values(filtros).some(activo) || buscar.value ? " (filtradas)" : ""}`;
     clear(cont);
     if (!rows.length) return vacio(cont, "Sin registros en ese período.");
     const thead = el("thead", {}, [
@@ -158,12 +241,15 @@ export async function render(vista, resto = []) {
         cols.map((c, i) => {
           const lista = `dl-${id}-${i}`;
           const valores = [...new Set(rows.map((r) => texto(c, r[i])).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es", { numeric: true })).slice(0, 300);
-          const inp = el("input", { type: "search", value: filtros[i] || "", placeholder: c.tipo === "n" ? "ej. >10" : "Filtrar…", list: lista, class: filtros[i] ? "activo" : "" });
+          const f = filtros[i] || {};
+          const inp = el("input", { type: "search", value: f.txt || "", placeholder: c.tipo === "n" ? "ej. >10" : "Filtrar…", list: lista, class: f.txt ? "activo" : "" });
           inp.addEventListener("change", () => {
-            filtros[i] = inp.value.trim();
+            filtros[i] = { ...(filtros[i] || {}), txt: inp.value.trim() };
             pintar();
           });
-          return el("th", {}, [inp, el("datalist", { id: lista }, valores.map((v) => el("option", { value: v })))]);
+          const avanzado = f.sel || f.desde || f.hasta;
+          const btn = el("button", { class: `filtro-btn ${avanzado ? "activo" : ""}`, type: "button", title: c.tipo === "d" ? "Desde/hasta y varias fechas" : "Elegir varios valores", onclick: () => panelFiltro(i) }, avanzado ? "▾●" : "▾");
+          return el("th", {}, [el("div", { class: "filtro-celda" }, [inp, btn]), el("datalist", { id: lista }, valores.map((v) => el("option", { value: v })))]);
         })
       ),
     ]);

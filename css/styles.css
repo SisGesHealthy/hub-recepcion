@@ -487,6 +487,14 @@ a.control-fila { color: inherit; text-decoration: none; }
 .grilla tbody tr:hover td { background: var(--brand-50); }
 .grilla tfoot td { position: sticky; bottom: 0; background: var(--brand-50); font-weight: 700; }
 .grilla .flecha { color: var(--azul); }
+.filtro-celda { display: flex; gap: 3px; }
+.filtro-btn { border: 1px solid var(--border); background: var(--card); color: var(--ink); border-radius: 6px; padding: 0 6px; cursor: pointer; font-size: 12px; }
+.filtro-btn.activo { border-color: var(--azul); background: var(--azul); color: #fff; }
+.filtro-lista { max-height: 45vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 4px; margin: 8px 0; }
+.filtro-op { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+.filtro-op:hover { background: var(--brand-50); }
+.filtro-op span { flex: 1; }
+.filtro-op small { color: var(--dim); }
 @media (max-width: 760px) { .barra-registros { padding: 6px 8px; } }
 .check-linea { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--dim); margin: 4px 0; }
 .en-curso { display: flex; flex-direction: column; gap: 6px; }
