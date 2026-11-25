@@ -12,16 +12,28 @@ export async function asignarLoteIngreso(rec, alTerminar) {
   const [sug, sigIng] = await Promise.all([st.sugerirLoteMP(rec), st.siguienteIngreso()]);
   const lote = el("input", { type: "text", value: rec.Lote || sug.lote, style: "text-transform:uppercase;font-size:20px;font-weight:700" });
   const ingreso = el("input", { type: "text", inputmode: "numeric", value: rec.NumeroIngreso ?? sigIng, style: "font-size:20px;font-weight:700" });
+  // Ya asignado: es un CAMBIO (solo Calidad), con justificación y constancia.
+  const yaAsignado = !!rec.Lote || (rec.NumeroIngreso !== null && rec.NumeroIngreso !== undefined);
+  const just = el("textarea", { rows: "3", placeholder: "¿Por qué se cambia? (ej. Bodega asignó el número del proveedor equivocado)" });
   const h = hoja(`Lote e ingreso · ${(rec.Proveedor || "").trim()}`, [
     el("p", { class: "sub" }, `${rec.Fruta} · #${rec.ID_1} · cerrada ${st.fmtFecha(rec.HoraCierre)} · ${st.fmtKg(rec.TotalNeto)} kg`),
     el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Lote"), lote,
       el("small", { class: "dim" }, sug.sufijo ? `Sugerido: día ${sug.base.slice(1, 4)} del año + número ${sug.sufijo} de este proveedor para esta fruta. Revísalo.` : "Sin número anterior para este proveedor y fruta: completa el número después del guion.")]),
     el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Número de ingreso"), ingreso, el("small", { class: "dim" }, `Sugerido el siguiente: ${sigIng}`)]),
+    yaAsignado
+      ? el("label", { class: "campo" }, [el("span", { class: "campo-label" }, `Justificación del cambio (obligatoria) · antes: ${rec.Lote || "—"} · ing. ${rec.NumeroIngreso ?? "—"}`), just])
+      : null,
     el("button", { class: "btn btn-verde btn-xl", onclick: async () => {
       const l = lote.value.trim().toUpperCase(), n = Number(String(ingreso.value).replace(/\D/g, ""));
       if (!/^L\d{5}-\d+$/.test(l) && !(await confirmar("¿Lote correcto?", `"${l}" no tiene la forma L32326-21. ¿Guardar igual?`, { si: "Sí, guardar" }))) return;
       if (!n) return toast("Falta el número de ingreso", "err");
-      await st.asignarLoteIngreso(rec, { lote: l, ingreso: n });
+      const cambia = yaAsignado && (l !== (rec.Lote || "") || n !== rec.NumeroIngreso);
+      if (cambia && just.value.trim().length < 10) return toast("Escribe la justificación del cambio", "err"), just.focus();
+      try {
+        await st.asignarLoteIngreso(rec, { lote: l, ingreso: n }, just.value.trim());
+      } catch (e) {
+        return toast(e.message, "err");
+      }
       h.cerrar(); toast(`Lote ${l} · ingreso ${n} guardados`); alTerminar?.();
     } }, "Guardar lote e ingreso"),
   ]);
@@ -108,6 +120,15 @@ export async function detalle(vista, id, { volver = ["#/bodega/recepciones", "�
   else envio = el("span", { class: "estado estado-verde" }, `Resumen enviado a ${rec.Correo}`);
 
   const lib = liberacion;
+  // Trazabilidad: cambios de lote / ingreso hechos después de la asignación.
+  const cambiosBox = el("div", { class: "cambios-traza" });
+  st.cambiosDe("recepciones", rec.ID).then((xs) => {
+    if (!xs.length) return;
+    cambiosBox.append(
+      el("h3", {}, "Cambios registrados"),
+      el("ul", { class: "lista-prod" }, xs.map((x) => el("li", {}, `${st.fmtFecha(x.FechaResolucion || x.Created)} · ${x.Resolutor || x.Solicitante || ""} · ${(x.Resumen || "").replace(/\n/g, " · ")} — ${x.Justificacion || ""}`)))
+    );
+  });
   const libEstado = lib ? lib.Estado : orden?.Estado_calidad || "Sin liberación registrada";
 
   vista.append(
@@ -122,7 +143,12 @@ export async function detalle(vista, id, { volver = ["#/bodega/recepciones", "�
             toast("Reenvío solicitado: el correo sale en 1-2 minutos");
           },
         }, "✉ Reenviar correo"),
-        !reenviar ? null : el("button", { class: "btn btn-ambar", onclick: () => asignarLoteIngreso(rec, () => location.reload()) }, rec.Lote ? "Editar lote e ingreso" : "Asignar lote e ingreso"),
+        // Bodega asigna la primera vez; cambiar lo ya asignado es de Calidad (con constancia).
+        !rec.Lote && (reenviar || st.esAprobador("calidad"))
+          ? el("button", { class: "btn btn-ambar", onclick: () => asignarLoteIngreso(rec, () => location.reload()) }, "Asignar lote e ingreso")
+          : rec.Lote && st.esAprobador("calidad")
+            ? el("button", { class: "btn btn-ambar", onclick: () => asignarLoteIngreso(rec, () => location.reload()) }, "✎ Cambiar lote / ingreso")
+            : null,
         el("button", { class: "btn btn-azul", onclick: () => window.print() }, "🖨 Imprimir"),
       ]),
     ]),
@@ -147,6 +173,7 @@ export async function detalle(vista, id, { volver = ["#/bodega/recepciones", "�
           fila("Número de ingreso", rec.NumeroIngreso != null ? String(rec.NumeroIngreso) : null),
           fila("Registrado por", rec.Operario),
         ]),
+        cambiosBox,
       ]),
       el("section", { class: "doc-sec" }, [
         el("h2", {}, "Liberación de Calidad"),

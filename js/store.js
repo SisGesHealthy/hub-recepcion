@@ -32,7 +32,7 @@ export function getApi() {
 
 // ---------------- usuario y accesos ----------------
 
-export const MODULOS = ["bodega", "calidad", "planta", "pesos", "temp", "averias", "config"];
+export const MODULOS = ["bodega", "calidad", "planta", "pesos", "temp", "averias", "config", "r04", "r05"];
 const accesosDe = (c) => (c === CONFIG.administrador ? [...MODULOS] : CONFIG.accesos[c] || []);
 
 export function setUsuario(nombre, correo) {
@@ -888,8 +888,40 @@ export async function siguienteIngreso() {
   } catch {}
   return max + 1;
 }
-export async function asignarLoteIngreso(rec, { lote, ingreso }) {
-  await encolar({ tipo: "update", lista: "recepciones", id: rec.ID, campos: { Lote: lote || null, NumeroIngreso: ingreso ?? null } });
+// La primera asignación (Bodega) es directa. Cambiar un lote / ingreso ya
+// asignado solo lo hace Calidad (aprobadores "calidad") y queda la constancia
+// en SolicitudesModificacion (antes → después, quién, cuándo y por qué).
+export async function asignarLoteIngreso(rec, { lote, ingreso }, justificacion = "") {
+  const cambios = [
+    { campo: "Lote", etiqueta: "Lote", antes: rec.Lote || null, despues: lote || null },
+    { campo: "NumeroIngreso", etiqueta: "Número de ingreso", antes: rec.NumeroIngreso ?? null, despues: ingreso ?? null },
+  ].filter((c) => c.antes !== null && c.antes !== c.despues);
+  if (!cambios.length) {
+    await encolar({ tipo: "update", lista: "recepciones", id: rec.ID, campos: { Lote: lote || null, NumeroIngreso: ingreso ?? null } });
+    return;
+  }
+  // Lo que estaba vacío también se escribe, en el mismo cambio.
+  const extra = [
+    { campo: "Lote", etiqueta: "Lote", antes: rec.Lote || null, despues: lote || null },
+    { campo: "NumeroIngreso", etiqueta: "Número de ingreso", antes: rec.NumeroIngreso ?? null, despues: ingreso ?? null },
+  ].filter((c) => c.antes === null && c.despues !== null);
+  await editarDirecto({
+    modulo: "calidad",
+    lista: "recepciones",
+    item: rec,
+    referencia: `Recepción #${rec.ID_1} · ${(rec.Proveedor || "").trim()} · ${rec.Fruta || ""} · ${fmtFecha(rec.HoraCierre, false)}`,
+    cambios: [...cambios, ...extra],
+    justificacion,
+  });
+}
+
+// Cambios registrados de un ítem (para mostrar la trazabilidad).
+export async function cambiosDe(lista, id) {
+  try {
+    return await api.items("solicitudes", { where: [["Lista", "eq", lista], ["ItemID", "eq", id]], orderby: "ID asc", top: 100 });
+  } catch {
+    return [];
+  }
 }
 
 // Histórico de liberaciones de una fruta: las del Hub + las del Excel M.ASC.02R04 de 2026
@@ -1312,6 +1344,8 @@ function aplicarConfig(cfg) {
         if (!(cfg.accesosVersion >= 2) && mods.includes("bodega") && !mods.includes("temp")) mods = [...mods, "temp"];
         // v3: Averías para todas las cuentas que ya tenían acceso (bodega reporta, Calidad libera).
         if (!(cfg.accesosVersion >= 3) && mods.length && !mods.includes("averias")) mods = [...mods, "averias"];
+        // v4: Registros R04/R05 para quienes ya los veían (Calidad, Planta, Configuración).
+        if (!(cfg.accesosVersion >= 4) && ["calidad", "planta", "config"].some((m) => mods.includes(m))) mods = [...new Set([...mods, "r04", "r05"])];
         return [k.trim().toLowerCase(), mods];
       })
     );
@@ -1372,7 +1406,7 @@ export async function cargarConfig({ esperar = false } = {}) {
 
 export async function guardarConfig(cfg) {
   const { carpeta, nombre } = CONFIG.archivoConfig;
-  const datos = { ...cfg, accesosVersion: 3, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
+  const datos = { ...cfg, accesosVersion: 4, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
   await api.escribirArchivo(carpeta, nombre, JSON.stringify(datos, null, 2));
   await kv.set("cache:config", datos);
   await cargarConfig();
@@ -1492,6 +1526,8 @@ export const REQUISITOS = {
   temp: { temperaturas: "editar" },
   averias: {},
   config: { parametrosPeso: "editar", catalogo: "leer" },
+  r04: { liberaciones: "leer", recepciones: "leer", pallets: "leer", ordenes: "leer" },
+  r05: { registros: "leer", lotes: "leer", catalogo: "leer" },
 };
 
 // Para cada cuenta: lo que necesita según sus módulos y lo que tiene en SharePoint.
@@ -1525,7 +1561,7 @@ export async function registroPorId(id) {
   return (await api.items("registros", { where: [["ID", "eq", id]], top: 1 }))[0] || null;
 }
 
-export const NOMBRES_MODULO = { planta: "Calidad - Planta" };
+export const NOMBRES_MODULO = { planta: "Calidad - Planta", calidad: "Calidad (MP)" };
 
 export function esAprobador(modulo, correo = correoVista()) {
   const c = (correo || "").toLowerCase();

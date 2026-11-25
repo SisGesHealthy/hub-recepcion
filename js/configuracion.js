@@ -12,7 +12,7 @@ import { el, clear } from "./dom.js";
 import * as st from "./store.js";
 import { toast, confirmar, aNumero } from "./ui.js";
 
-const NOMBRES = { bodega: "Bodega", calidad: "Calidad (MP)", planta: "Calidad - Planta", pesos: "Control de pesos", temp: "Temperaturas", averias: "Averías", config: "Configuración" };
+const NOMBRES = { bodega: "Bodega", calidad: "Calidad (MP)", planta: "Calidad - Planta", pesos: "Control de pesos", temp: "Temperaturas", averias: "Averías", config: "Configuración", r04: "Registro R04 (ver)", r05: "Registro R05 (ver)" };
 
 export async function render(vista) {
   await st.cargarConfig({ esperar: true });
@@ -71,6 +71,7 @@ export async function render(vista) {
   // ---- aprobadores de modificaciones ----
   const aprobPlanta = lista(CONFIG.aprobadores?.planta || []);
   const ctasCalidad = lista(CONFIG.cuentasCalidad || []);
+  const aprobCalidad = lista(CONFIG.aprobadores?.calidad || []);
 
   // ---- contenedores (Temperaturas) ----
   const conts = CONFIG.contenedores.map((c) => ({ ...c }));
@@ -182,6 +183,8 @@ export async function render(vista) {
     const r = lineas(resp);
     const ap = lineas(aprobPlanta).map((x) => x.toLowerCase());
     const cc = lineas(ctasCalidad).map((x) => x.toLowerCase());
+    const acal = lineas(aprobCalidad).map((x) => x.toLowerCase());
+    if (acal.some((x) => !/^[^\s@]+@[^\s@]+\.[a-z]{2,}/i.test(x))) return toast("Aprobadores Calidad MP: escribe correos válidos, uno por línea", "err");
     if (cc.some((x) => !/^[^\s@]+@[^\s@]+\.[a-z]{2,}/i.test(x))) return toast("Cuentas de Calidad: escribe correos válidos, uno por línea", "err");
     if (ap.some((x) => !/^[^\s@]+@[^\s@]+\.[a-z]{2,}/i.test(x))) return toast("Aprobadores: escribe correos válidos, uno por línea", "err");
     const b = lineas(bod);
@@ -212,7 +215,7 @@ export async function render(vista) {
     const accesos = { [CONFIG.administrador]: [...st.MODULOS], ...Object.fromEntries(cuentas.map((f) => [f.correo, st.MODULOS.filter((m) => f.mods.has(m))])) };
     btn.disabled = true;
     try {
-      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas, contenedores: conts, turnosTemperatura: ts.map((x) => x.inicio).sort(), ventanasTemperatura: Object.fromEntries(ts.map((x) => [x.inicio, x.fin])), aprobadores: { ...CONFIG.aprobadores, planta: ap }, cuentasCalidad: cc });
+      await st.guardarConfig({ accesos, responsablesPlanta: r, bodegueros: b, inicialesHistoricas: CONFIG.inicialesHistoricas, contenedores: conts, turnosTemperatura: ts.map((x) => x.inicio).sort(), ventanasTemperatura: Object.fromEntries(ts.map((x) => [x.inicio, x.fin])), aprobadores: { ...CONFIG.aprobadores, planta: ap, calidad: acal }, cuentasCalidad: cc });
       toast("Configuración guardada: cada equipo la toma al volver a abrir la app");
     } catch (e) {
       toast("No se pudo guardar en SharePoint: " + e.message, "err");
@@ -242,6 +245,7 @@ export async function render(vista) {
       el("h2", {}, "Aprobadores de modificaciones"),
       el("p", { class: "nota" }, "Un registro ya guardado no se cambia libremente: el analista pide el cambio con su justificación y una de estas cuentas lo aprueba o lo rechaza. Estas cuentas también pueden editar directamente (queda constancia con su justificación). Sistemas siempre puede."),
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Calidad - Planta (paradas de liberación en proceso) · un correo por línea"), aprobPlanta]),
+      el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Calidad (MP): cambiar lote y n.º de ingreso ya asignados por Bodega · un correo por línea"), aprobCalidad]),
       el("h3", {}, "Cuentas de Calidad (Liberación en proceso)"),
       el("p", { class: "nota" }, "Para estas cuentas, sensorial y controles PPRO/PCC son obligatorios al registrar una parada y pueden completar los que dejó Producción. Para las demás cuentas (ej. Producción) son opcionales: la parada queda «Pendiente de Calidad»."),
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Un correo por línea"), ctasCalidad]),

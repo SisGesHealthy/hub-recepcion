@@ -51,7 +51,10 @@ async function cargarDatos(id, desde, hasta) {
 }
 
 export async function render(vista, resto = []) {
-  const id = REGISTROS[resto[0]] ? resto[0] : "r04";
+  // Cada registro se ve solo si la cuenta lo tiene en Configuración → Cuentas con acceso.
+  const permitidos = Object.keys(REGISTROS).filter((k) => st.getUsuario().accesos.includes(k));
+  if (!permitidos.length) return vacio(vista, "Esta cuenta no tiene acceso a los registros.");
+  const id = permitidos.includes(resto[0]) ? resto[0] : permitidos[0];
   const reg = REGISTROS[id];
   const hoy = st.hoyISO();
   const inicioMes = hoy.slice(0, 8) + "01";
@@ -85,7 +88,7 @@ export async function render(vista, resto = []) {
         el("h1", { class: "titulo" }, `${reg.codigo} · ${reg.titulo}`),
         el("p", { class: "sub" }, `${reg.sub} · solo consulta`),
       ]),
-      el("div", { class: "cab-botones" }, Object.entries(REGISTROS).map(([k, r]) => el("a", { class: `btn ${k === id ? "btn-azul" : "btn-sec"}`, href: `#/registros/${k}` }, r.codigo))),
+      el("div", { class: "cab-botones" }, Object.entries(REGISTROS).filter(([k]) => permitidos.includes(k)).map(([k, r]) => el("a", { class: `btn ${k === id ? "btn-azul" : "btn-sec"}`, href: `#/registros/${k}` }, r.codigo))),
     ]),
     el("div", { class: "filtros-reporte" }, [
       rango,

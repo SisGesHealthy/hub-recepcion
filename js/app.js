@@ -206,12 +206,14 @@ async function rutear() {
 
 function inicio(u) {
   clear(vista);
-  if (u.accesos.length === 1) {
+  // Solo los módulos con tarjeta (los registros R04/R05 van en la barra).
+  const deps = u.accesos.filter((k) => DEPTOS[k]);
+  if (deps.length === 1) {
     // Un solo departamento (ej. bodega2): directo, sin pantalla intermedia.
-    location.replace(DEPTOS[u.accesos[0]].ruta);
+    location.replace(DEPTOS[deps[0]].ruta);
     return;
   }
-  if (!u.accesos.length) return sinAcceso(u);
+  if (!deps.length) return puedeVerRegistros(u) ? location.replace("#/registros") : sinAcceso(u);
   vista.appendChild(
     el("section", { class: "inicio" }, [
       el("h1", { class: "titulo" }, `Hola, ${u.nombre.split(" ")[0]}`),
@@ -219,7 +221,7 @@ function inicio(u) {
       el(
         "div",
         { class: "deptos" },
-        u.accesos.map((k) =>
+        deps.map((k) =>
           el("a", { class: "depto", href: DEPTOS[k].ruta }, [
             el("span", { class: "depto-ico" }, DEPTOS[k].icono === "balanza" ? iconoBalanza("ico-depto") : DEPTOS[k].icono === "termometro" ? iconoTermometro("ico-depto") : DEPTOS[k].icono),
             el("strong", {}, DEPTOS[k].titulo),
@@ -243,7 +245,7 @@ function pintarAvisoVerComo(u) {
 }
 
 // Registros de Calidad: los ven quienes tienen Calidad, Calidad - Planta o Configuración.
-const puedeVerRegistros = (u) => ["calidad", "planta", "config"].some((m) => u.accesos.includes(m));
+const puedeVerRegistros = (u) => u.accesos.includes("r04") || u.accesos.includes("r05");
 
 function sinAcceso(u) {
   clear(vista);

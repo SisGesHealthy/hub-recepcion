@@ -66,6 +66,8 @@ export const CONFIG = {
   cuentasCalidad: ["calidad@healthyfood.com.ec", "calidad2@healthyfood.com.ec"],
   aprobadores: {
     planta: ["calidad@healthyfood.com.ec", "sistemasdegestion@healthyfood.com.ec"],
+    // Lote y n.º de ingreso de una recepción ya asignados por Bodega.
+    calidad: ["calidad@healthyfood.com.ec", "calidad2@healthyfood.com.ec"],
   },
 
   // Registro M.ASC.02R04: la columna R es un correlativo fijo de las
@@ -84,8 +86,8 @@ export const CONFIG = {
 
   accesos: {
     "bodega2@healthyfood.com.ec": ["bodega", "temp", "averias"],
-    "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias"],
-    "calidad2@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias"],
+    "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias", "r04", "r05"],
+    "calidad2@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias", "r04", "r05"],
     // "config" = administrador: configuración y parámetros de peso
     "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta", "pesos", "config"],
   },
