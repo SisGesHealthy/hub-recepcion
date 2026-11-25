@@ -66,8 +66,10 @@ export const CONFIG = {
   cuentasCalidad: ["calidad@healthyfood.com.ec", "calidad2@healthyfood.com.ec"],
   aprobadores: {
     planta: ["calidad@healthyfood.com.ec", "sistemasdegestion@healthyfood.com.ec"],
+    // Liberaciones de MP ya guardadas (misma lógica que Planta).
+    calidad: ["calidad@healthyfood.com.ec", "sistemasdegestion@healthyfood.com.ec"],
     // Lote y n.º de ingreso de una recepción ya asignados por Bodega.
-    calidad: ["calidad@healthyfood.com.ec", "calidad2@healthyfood.com.ec"],
+    recepcion: ["calidad@healthyfood.com.ec", "calidad2@healthyfood.com.ec"],
   },
 
   // Registro M.ASC.02R04: la columna R es un correlativo fijo de las

@@ -130,6 +130,7 @@ async function ejecutar(op) {
   } else if (op.tipo === "update" || op.tipo === "updateWhere") {
     const id = op.tipo === "update" ? op.id : (await buscarUno(op.lista, op.where))?.ID;
     if (!id && (await yaCerrada(op))) return console.info("Ya estaba cerrada en SharePoint, se omite:", op);
+    if (!id && op.opcional) return console.info("Registro opcional no encontrado, se omite:", op);
     if (!id) throw Object.assign(new Error(`No se encontró en ${op.lista} el registro a actualizar.`), { status: 404 });
     // Imagen primero y luego UNA sola escritura con todos los campos: cada
     // escritura dispara un aviso al flujo de Power Automate, y varias seguidas
@@ -149,7 +150,7 @@ let repetir = false;
 // Grupos independientes de la cola: un registro que falla solo detiene a los
 // de su grupo (el orden importa dentro de una recepción), no a los demás.
 // Ej. una temperatura con error ya no deja trabados los pallets.
-const GRUPO = { temperaturas: "Temperaturas", controlPesos: "Control de pesos", parametrosPeso: "Control de pesos", lotes: "Calidad - Planta", registros: "Calidad - Planta", solicitudes: "Calidad - Planta" };
+const GRUPO = { temperaturas: "Temperaturas", controlPesos: "Control de pesos", parametrosPeso: "Control de pesos", lotes: "Calidad - Planta", registros: "Calidad - Planta", solicitudes: "Solicitudes de modificación" };
 const grupoDe = (op) => GRUPO[op.lista] || "Recepción y liberación";
 
 export function sincronizar() {
@@ -906,7 +907,7 @@ export async function asignarLoteIngreso(rec, { lote, ingreso }, justificacion =
     { campo: "NumeroIngreso", etiqueta: "Número de ingreso", antes: rec.NumeroIngreso ?? null, despues: ingreso ?? null },
   ].filter((c) => c.antes === null && c.despues !== null);
   await editarDirecto({
-    modulo: "calidad",
+    modulo: "recepcion",
     lista: "recepciones",
     item: rec,
     referencia: `Recepción #${rec.ID_1} · ${(rec.Proveedor || "").trim()} · ${rec.Fruta || ""} · ${fmtFecha(rec.HoraCierre, false)}`,
@@ -1557,11 +1558,19 @@ export async function revisarPermisos(cuentas) {
 // aprobador lo aplica o lo rechaza. Los aprobadores pueden editar directo, pero
 // igual queda la constancia (Directa = sí) con su justificación.
 
-export async function registroPorId(id) {
-  return (await api.items("registros", { where: [["ID", "eq", id]], top: 1 }))[0] || null;
+export async function itemPorId(lista, id) {
+  return (await api.items(lista, { where: [["ID", "eq", id]], top: 1 }))[0] || null;
 }
 
-export const NOMBRES_MODULO = { planta: "Calidad - Planta", calidad: "Calidad (MP)" };
+// Cambiar el estado de una liberación (Liberado ↔ Rechazado) también cambia el
+// estado de Calidad en la orden, que es lo que controla a Bodega.
+async function efectosColaterales(lista, cambios) {
+  const e = lista === "liberaciones" && cambios.find((c) => c.campo === "Estado" && c.idn);
+  // opcional: si la orden ya no existe, no se traba la cola por esto.
+  if (e) await encolar({ tipo: "updateWhere", lista: "ordenes", where: [["OData__x0049_D2", "eq", e.idn]], campos: { Estado_calidad: e.despues }, opcional: true });
+}
+
+export const NOMBRES_MODULO = { planta: "Calidad - Planta", calidad: "Calidad (MP) · liberaciones", recepcion: "Lote e ingreso de recepciones" };
 
 export function esAprobador(modulo, correo = correoVista()) {
   const c = (correo || "").toLowerCase();
@@ -1618,6 +1627,7 @@ export async function resolverSolicitud(sol, aprobar, comentario = "") {
     const cambios = JSON.parse(sol.Cambios || "[]");
     const campos = Object.fromEntries(cambios.map((c) => [c.campo, c.despues === "" ? null : c.despues]));
     if (Object.keys(campos).length) await encolar({ tipo: "update", lista: sol.Lista, id: sol.ItemID, campos });
+    await efectosColaterales(sol.Lista, cambios);
   }
   await encolar({
     tipo: "update",
@@ -1632,6 +1642,7 @@ export async function editarDirecto({ modulo, lista, item, referencia, cambios, 
   if (!esAprobador(modulo)) throw new Error("Esta cuenta no puede editar directamente: envía una solicitud.");
   const campos = Object.fromEntries(cambios.map((c) => [c.campo, c.despues === "" ? null : c.despues]));
   await encolar({ tipo: "update", lista, id: item.ID, campos });
+  await efectosColaterales(lista, cambios);
   const Title = nuevoCodigo();
   await encolar({
     tipo: "add",

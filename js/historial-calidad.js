@@ -4,7 +4,9 @@
 
 import { el, clear } from "./dom.js";
 import * as st from "./store.js";
-import { toast, vacio } from "./ui.js";
+import { CONFIG } from "./config.js";
+import { toast, vacio, hoja, campoNum } from "./ui.js";
+import { btnSolicitudes } from "./solicitudes.js";
 
 const COLS = [
   ["Fecha liberación", (f) => st.fmtFecha(f.lib.HoraCierre || f.lib.Created)],
@@ -77,6 +79,7 @@ export async function render(vista) {
         el("h1", { class: "titulo" }, "Historial de liberaciones"),
         el("p", { class: "sub" }, "Lo que Calidad analizó y lo que Bodega recibió de cada orden"),
       ]),
+      el("div", { class: "cab-botones" }, btnSolicitudes("calidad", "#/calidad/solicitudes")),
     ]),
     el("div", { class: "filtros-reporte" }, [
       dias,
@@ -124,19 +127,22 @@ export async function render(vista) {
     if (!visibles.length) return vacio(cont, "No hay liberaciones en ese período.");
     cont.appendChild(
       el("table", { class: "doc-tabla reporte hist-tabla" }, [
-        el("tr", {}, COLS.map((c) => el("th", {}, c[0]))),
+        el("tr", {}, [...COLS.map((c) => el("th", {}, c[0])), el("th", {}, "Cambios")]),
         ...visibles.map((f) => {
           const rec = f.recepciones.find((r) => r.Estado === "Finalizada") || f.recepciones[0];
           const tr = el(
             "tr",
             { class: rec ? "clic" : "", title: rec ? "Ver resumen de la recepción" : "", onclick: rec ? () => (location.hash = `#/calidad/ver/${rec.ID}`) : null },
-            COLS.map(([nombre, fn, t]) => {
-              const v = fn(f);
-              const td = el("td", { class: t === "n" ? "num" : "" }, t === "n" ? (v === null || v === undefined || v === "" ? "" : typeof v === "number" ? v.toLocaleString("es-EC", { maximumFractionDigits: 2 }) : String(v)) : String(v ?? ""));
-              if (nombre === "Estado") td.className = v === "Liberado" ? "ok" : "fuera";
-              if (nombre === "Recepción" && v !== "Recibida") td.className = "aviso-td";
-              return td;
-            })
+            [
+              ...COLS.map(([nombre, fn, t]) => {
+                const v = fn(f);
+                const td = el("td", { class: t === "n" ? "num" : "" }, t === "n" ? (v === null || v === undefined || v === "" ? "" : typeof v === "number" ? v.toLocaleString("es-EC", { maximumFractionDigits: 2 }) : String(v)) : String(v ?? ""));
+                if (nombre === "Estado") td.className = v === "Liberado" ? "ok" : "fuera";
+                if (nombre === "Recepción" && v !== "Recibida") td.className = "aviso-td";
+                return td;
+              }),
+              el("td", { onclick: (e) => e.stopPropagation() }, botonCambio(f.lib)),
+            ]
           );
           return tr;
         }),
@@ -144,8 +150,16 @@ export async function render(vista) {
     );
   };
 
+  // Solicitudes pendientes por liberación (ID → solicitud).
+  let solPend = new Map();
+  const botonCambio = (lib) => {
+    if (solPend.has(lib.ID)) return el("a", { class: "btn btn-sec btn-mini", href: "#/calidad/solicitudes", title: solPend.get(lib.ID).Resumen || "" }, "⏳ Pendiente");
+    return el("button", { class: "btn btn-sec btn-mini", onclick: () => modificarLiberacion(lib, cargar) }, st.esAprobador("calidad") ? "✎ Editar" : "Solicitar cambio");
+  };
+
   async function cargar() {
     clear(resumen);
+    solPend = new Map((await st.solicitudesPendientes("calidad").catch(() => [])).filter((x) => x.Lista === "liberaciones").map((x) => [x.ItemID, x]));
     cont.replaceChildren(el("div", { class: "cargando" }, "Cruzando liberaciones con recepciones…"));
     try {
       filas = await st.historialLiberaciones(Number(dias.value));
@@ -163,4 +177,87 @@ export async function render(vista) {
 
 function kpi(valor, texto, tono = "") {
   return el("div", { class: `hist-kpi ${tono}` }, [el("b", {}, valor), el("span", {}, texto)]);
+}
+
+// Cambiar una liberación ya guardada: misma lógica que Calidad - Planta. Quien
+// no es aprobador de "Calidad (MP)" envía una solicitud con justificación; el
+// aprobador edita directo y queda la constancia (SolicitudesModificacion).
+async function modificarLiberacion(lib, alTerminar) {
+  const aprobador = st.esAprobador("calidad");
+  const SN = ["Sí", "No"];
+  const referencia = `Liberación #${lib.ID_1} · ${(lib.Proveedor || "").trim()} · ${lib.Fruta || ""} · ${st.fmtFecha(lib.HoraCierre || lib.Created)}`;
+  // [etiqueta, propiedad, tipo (num | txt | area | opciones), valor actual]
+  const defs = [
+    ["Estado", "Estado", ["Liberado", "Rechazado"], lib.Estado],
+    ["Liberado con condición", "Condicionado", SN, lib.Condicionado],
+    ["°Brix", "OData__x00b0_Brix", "num", lib.OData__x00b0_Brix],
+    ["pH", "PH", "num", lib.PH],
+    ["Acidez", "Acidez", "num", lib.Acidez],
+    ["Madurez (1-5)", "Madurez", "num", lib.Madurez],
+    ["Responsable", "Responsable", "txt", lib.Responsable],
+    ["Seguridad industrial", "SeguridadIndustrial", ["Cumple", "No cumple"], lib.SeguridadIndustrial],
+    ["Condiciones de transporte", "CondicionesTransporte", ["OK", "No OK"], lib.CondicionesTransporte],
+    ["Insectos", "Insectos", SN, lib.Insectos],
+    ["Pudrición", "Pudricion", SN, lib.Pudricion],
+    ["Daños mecánicos", "DanosMecanicos", SN, lib.DanosMecanicos],
+    ["Olor a pesticida", "OlorPesticida", SN, lib.OlorPesticida],
+    ["Contaminación física", "ContaminacionFisica", SN, lib.ContaminacionFisica],
+    ["Plagas en el transporte", "PlagasTransporte", SN, lib.PlagasTransporte],
+    ["Análisis micro", "AnalisisMicro", SN, lib.AnalisisMicro],
+    ["Aerobios", "MicroAerobios", "num", lib.MicroAerobios],
+    ["Mohos y levaduras", "MicroMohosLevaduras", "num", lib.MicroMohosLevaduras],
+    ["Coliformes", "MicroColiformes", "num", lib.MicroColiformes],
+    ["E. coli", "MicroEColi", "num", lib.MicroEColi],
+    ["Salmonella", "MicroSalmonella", "txt", lib.MicroSalmonella],
+    ["Detalle del rechazo", "DetalleRechazo", "area", lib.DetalleRechazo],
+    ["Observaciones", "Observaciones", "area", lib.Observaciones],
+  ];
+  const entradas = defs.map(([label, prop, tipo, actual]) => {
+    if (tipo === "num") {
+      const c = campoNum(label, { valor: actual ?? "" });
+      return { label, prop, tipo, actual, wrap: c.wrap, leer: () => c.val() };
+    }
+    let x;
+    if (Array.isArray(tipo)) {
+      x = el("select", {}, [el("option", { value: "" }, "—"), ...tipo.map((o) => el("option", { value: o }, o))]);
+      x.value = actual ?? "";
+    } else if (tipo === "area") x = el("textarea", { rows: "2" }, actual ?? "");
+    else x = el("input", { type: "text", value: actual ?? "" });
+    const vacio = actual === null || actual === undefined || actual === "";
+    return { label, prop, tipo, actual, wrap: el("label", { class: `campo ${vacio ? "campo-vacio" : ""}` }, [el("span", { class: "campo-label" }, label), x]), leer: () => (x.value.trim() === "" ? null : x.value.trim()) };
+  });
+  const igual = (a, b) => (a ?? null) === (b ?? null) || (typeof a === "number" && typeof b === "number" && Math.abs(a - b) < 1e-9);
+  const just = el("textarea", { rows: "3", placeholder: "¿Por qué se cambia? (ej. se registró el pH de otra orden)" });
+  const btn = el("button", { class: "btn btn-verde btn-xl" }, aprobador ? "Guardar cambio" : "Enviar solicitud");
+  const h = hoja(aprobador ? "Editar liberación" : "Solicitar cambio de liberación", [
+    el("p", { class: "sub" }, referencia),
+    el("p", { class: "nota" }, aprobador
+      ? "Eres aprobador de Calidad (MP): el cambio se aplica al guardar y queda registrado con tu justificación."
+      : "El cambio NO se aplica todavía: se envía para aprobación con tu justificación."),
+    el("div", { class: "campos-3" }, entradas.filter((e) => e.tipo === "num").map((e) => e.wrap)),
+    el("div", { class: "campos-2" }, entradas.filter((e) => e.tipo !== "num").map((e) => e.wrap)),
+    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Justificación (obligatoria)"), just]),
+    btn,
+  ], { ancho: 760 });
+  btn.addEventListener("click", async () => {
+    const cambios = entradas
+      .map((e) => ({ campo: e.prop, etiqueta: e.label, antes: e.actual ?? null, despues: e.leer(), ...(e.prop === "Estado" ? { idn: lib.ID_1 } : {}) }))
+      .filter((c) => !igual(c.antes, c.despues));
+    if (!cambios.length) return toast("No cambiaste ningún dato", "err");
+    if (cambios.some((c) => c.campo === "Estado" && !c.despues)) return toast("El estado no puede quedar vacío", "err");
+    if (just.value.trim().length < 10) return toast("Escribe la justificación (al menos una frase)", "err"), just.focus();
+    btn.disabled = true;
+    const datos = { modulo: "calidad", lista: "liberaciones", item: lib, referencia, cambios, justificacion: just.value.trim() };
+    try {
+      if (aprobador) await st.editarDirecto(datos);
+      else await st.solicitarModificacion(datos);
+    } catch (e) {
+      btn.disabled = false;
+      return toast(e.message, "err");
+    }
+    h.cerrar();
+    toast(aprobador ? "Cambio guardado y registrado" : "Solicitud enviada para aprobación");
+    await st.subirAhora();
+    alTerminar?.();
+  });
 }

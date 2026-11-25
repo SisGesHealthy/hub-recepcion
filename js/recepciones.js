@@ -144,9 +144,9 @@ export async function detalle(vista, id, { volver = ["#/bodega/recepciones", "�
           },
         }, "✉ Reenviar correo"),
         // Bodega asigna la primera vez; cambiar lo ya asignado es de Calidad (con constancia).
-        !rec.Lote && (reenviar || st.esAprobador("calidad"))
+        !rec.Lote && (reenviar || st.esAprobador("recepcion"))
           ? el("button", { class: "btn btn-ambar", onclick: () => asignarLoteIngreso(rec, () => location.reload()) }, "Asignar lote e ingreso")
-          : rec.Lote && st.esAprobador("calidad")
+          : rec.Lote && st.esAprobador("recepcion")
             ? el("button", { class: "btn btn-ambar", onclick: () => asignarLoteIngreso(rec, () => location.reload()) }, "✎ Cambiar lote / ingreso")
             : null,
         el("button", { class: "btn btn-azul", onclick: () => window.print() }, "🖨 Imprimir"),

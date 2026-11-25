@@ -15,6 +15,7 @@ export function render(vista, resto = []) {
   if (resto[0] === "historial") return import("./historial-calidad.js").then((m) => m.render(vista));
   if (resto[0] === "micro") return pantallaMicro(vista);
   if (resto[0] === "registro") return pantallaRegistro(vista);
+  if (resto[0] === "solicitudes") return import("./solicitudes.js").then((m) => m.render(vista, "calidad", ["#/calidad/historial", "← Historial de liberaciones"]));
   if (resto[0] === "ver" && resto[1])
     return import("./recepciones.js").then((m) => m.detalle(vista, Number(resto[1]), { volver: ["#/calidad/historial", "← Historial de liberaciones"], reenviar: false }));
   const lista = el("div", { class: "ordenes" }, el("div", { class: "cargando" }, "Cargando…"));
