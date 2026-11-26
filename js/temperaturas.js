@@ -16,6 +16,8 @@ const fmtT = (t) => (t === null || t === undefined || isNaN(t) ? "—" : `${Stri
 const activos = () => CONFIG.contenedores.filter((c) => c.activo !== false);
 // append() de DOM escribe "null" si recibe null: se filtran los vacíos.
 const poner = (nodo, ...hijos) => nodo.append(...hijos.filter((h) => h !== null && h !== undefined && h !== false));
+// Fuera de rango = Alto o Bajo (apagado no cuenta como fuera de rango).
+const fueraDeRango = (r) => !!r && (r.Estado === "Alto" || r.Estado === "Bajo");
 const claseTipo = (c) => (/refriger/i.test(c.tipo || "") ? "refri" : /congel/i.test(c.tipo || "") ? "congel" : "otro");
 
 export function render(vista, resto) {
@@ -65,16 +67,18 @@ async function pantallaTurno(vista, dia, turno, abierto) {
     for (const t of CONFIG.turnosTemperatura) {
       const m = deTurno(t);
       const n = conts.filter((c) => m.has(c.id)).length;
-      const fuera = conts.filter((c) => m.has(c.id) && m.get(c.id).Estado && m.get(c.id).Estado !== "OK").length;
+      const fuera = conts.filter((c) => m.has(c.id) && fueraDeRango(m.get(c.id))).length;
       const s = vista.querySelector(`[data-turno="${t}"]`);
       if (s) s.textContent = `${n}/${conts.length}${fuera ? ` · ⚠ ${fuera}` : ""}`;
     }
     const m = deTurno(turno);
     const n = conts.filter((c) => m.has(c.id)).length;
-    const fuera = conts.filter((c) => m.get(c.id)?.Estado && m.get(c.id).Estado !== "OK").length;
+    const fuera = conts.filter((c) => fueraDeRango(m.get(c.id))).length;
+    const apagados = conts.filter((c) => m.get(c.id)?.Estado === "Apagado").length;
     clear(progreso);
     poner(progreso,
       el("b", {}, `${n} de ${conts.length} registrados`),
+      apagados ? el("span", { class: "estado estado-gris" }, `${apagados} apagado${apagados > 1 ? "s" : ""}`) : null,
       fuera ? el("span", { class: "estado estado-rojo" }, `${fuera} fuera de rango`) : n === conts.length ? el("span", { class: "estado estado-verde" }, "Turno completo ✓") : null
     );
   };
@@ -112,14 +116,16 @@ async function pantallaTurno(vista, dia, turno, abierto) {
         el("span", { class: "temp-ico" }, claseTipo(c) === "refri" ? "💧" : "❄"),
       ]);
       card.appendChild(cab);
+      card.classList.remove("apagado");
       if (r && !card.dataset.editando) {
-        const fuera = r.Estado && r.Estado !== "OK";
-        card.classList.add(fuera ? "fuera" : "ok");
+        const apagadoR = r.Estado === "Apagado";
+        const fuera = fueraDeRango(r);
+        card.classList.add(apagadoR ? "apagado" : fuera ? "fuera" : "ok");
         poner(card,
           el("div", { class: "temp-hecho" }, [
-            el("div", { class: "temp-valor" }, fmtT(r.Temperatura)),
+            el("div", { class: "temp-valor" }, apagadoR ? "⏻ Apagado" : fmtT(r.Temperatura)),
             el("div", { class: "temp-info" }, [
-              el("b", {}, fuera ? `${r.Estado === "Alto" ? "Sobre" : "Bajo"} el rango` : "Dentro de rango"),
+              el("b", {}, apagadoR ? "Contenedor apagado (sin temperatura)" : fuera ? `${r.Estado === "Alto" ? "Sobre" : "Bajo"} el rango` : "Dentro de rango"),
               el("small", {}, `${st.fmtHora(r.HoraRegistro)} · ${r.Bodeguero || r.Operario || ""}${r.pendiente ? " · ↻ subiendo" : ""}`),
               r.Observaciones ? el("small", { class: "temp-obs" }, r.Observaciones) : null,
             ]),
@@ -132,7 +138,7 @@ async function pantallaTurno(vista, dia, turno, abierto) {
       // Arranca en la lectura de este turno (si se corrige), si no en la última
       // registrada de ese contenedor, si no en el centro de su rango.
       const centro = c.min != null && c.max != null ? (c.min + c.max) / 2 : c.max ?? c.min ?? 0;
-      let v = r ? r.Temperatura : ultimos[c.id] ?? Math.round(centro * 2) / 2;
+      let v = r && r.Temperatura != null ? r.Temperatura : ultimos[c.id] ?? Math.round(centro * 2) / 2;
       const lo = Math.floor(c.min ?? (c.max ?? 0) - 15) - 10;
       const hi = Math.ceil(c.max ?? (c.min ?? 0) + 15) + 10;
       // Enteros con signo explícito: incluye "−0" y "0" para lecturas como −0,4.
@@ -210,31 +216,52 @@ async function pantallaTurno(vista, dia, turno, abierto) {
       });
       const btn = el("button", { class: "btn btn-verde temp-guardar", type: "button" }, r ? "Guardar corrección" : "Registrar");
       btn.addEventListener("click", async () => {
-        const x = valor();
-        if (Math.abs(x) > 60) return toast(`${c.nombre}: ${fmtT(x)} no parece una lectura válida`, "err");
+        const x = apagado ? null : valor();
+        if (!apagado && Math.abs(x) > 60) return toast(`${c.nombre}: ${fmtT(x)} no parece una lectura válida`, "err");
         // Foto del panel obligatoria siempre (también al corregir).
         if (!foto) return toast(`${c.nombre}: falta la foto del panel`, "err"), btnFoto.classList.add("falta");
         if (!bodeguero.value) return toast("Elige el bodeguero arriba", "err"), bodeguero.focus();
         const ahora = st.turnoActual();
         if (!ahora.abierto || ahora.turno !== turno || ahora.dia !== dia) return toast(`Se cerró el horario del turno ${turno} (hasta ${st.finTurno(turno)})`, "err");
         btn.disabled = true;
-        const nuevo = await st.registrarTemperatura({ dia, turno, contenedor: c, temperatura: x, observaciones: obs.value.trim(), bodeguero: bodeguero.value, existente: !!r }, foto);
-        ultimos[c.id] = x;
-        kv.set(`temp:ultimo:${c.id}`, x);
+        const nuevo = await st.registrarTemperatura({ dia, turno, contenedor: c, temperatura: x, apagado, observaciones: obs.value.trim(), bodeguero: bodeguero.value, existente: !!r }, foto);
+        if (!apagado) {
+          ultimos[c.id] = x;
+          kv.set(`temp:ultimo:${c.id}`, x);
+        }
         lecturas = [...lecturas.filter((y) => y.Title !== nuevo.Title), nuevo];
         delete card.dataset.editando;
         pintar();
         pintarProgreso();
         if (navigator.vibrate) navigator.vibrate(40);
         // siguiente contenedor sin registrar
-        const sig = [...lista.querySelectorAll(".temp-card:not(.ok):not(.fuera)")][0];
+        const sig = [...lista.querySelectorAll(".temp-card:not(.ok):not(.fuera):not(.apagado)")][0];
         if (sig) sig.scrollIntoView({ behavior: "smooth", block: "center" });
       });
-      poner(
-        card,
+      // Contenedor apagado: excluyente con la temperatura (se registra uno u otro).
+      let apagado = r?.Estado === "Apagado";
+      const lectura = el("div", { class: "temp-captura-valor" }, [
         el("div", { class: "temp-lectura" }, [el("div", { class: "temp-campo" }, [display, el("span", {}, "°C")]), aviso]),
         el("div", { class: "temp-ruedas" }, [rEnt.nodo, rDec.nodo]),
         el("p", { class: "temp-ayuda" }, "Desliza los grados y el decimal hasta lo que marca el panel (o toca el número para escribir)."),
+      ]);
+      const btnApagado = el("button", { class: "btn temp-apagado", type: "button" });
+      const pintarApagado = () => {
+        lectura.classList.toggle("hidden", apagado);
+        btnApagado.classList.toggle("activo", apagado);
+        btnApagado.textContent = apagado ? "⏻ Contenedor apagado · tocar para registrar temperatura" : "⏻ El contenedor está apagado";
+        btn.textContent = apagado ? (r ? "Guardar corrección (apagado)" : "Registrar apagado") : r ? "Guardar corrección" : "Registrar";
+      };
+      btnApagado.addEventListener("click", () => {
+        apagado = !apagado;
+        pintarApagado();
+        if (apagado) obs.closest("details").open = true;
+        else requestAnimationFrame(() => (rEnt.ir(enteros.findIndex((x) => x.s === sel.s && x.a === sel.a), false), rDec.ir(sel.d, false)));
+      });
+      poner(
+        card,
+        btnApagado,
+        lectura,
         btnFoto,
         fileIn,
         el("details", { class: "temp-mas", ...(r?.Observaciones ? { open: "" } : {}) }, [el("summary", {}, "Observación (opcional)"), obs]),
@@ -242,6 +269,7 @@ async function pantallaTurno(vista, dia, turno, abierto) {
         r ? el("button", { class: "btn btn-sec btn-mini", type: "button", onclick: () => (delete card.dataset.editando, pintar()) }, "Cancelar corrección") : null
       );
       evaluar();
+      pintarApagado();
       // Las ruedas se ubican en el valor inicial cuando ya tienen tamaño en pantalla.
       requestAnimationFrame(() => {
         rEnt.ir(enteros.findIndex((x) => x.s === sel.s && x.a === sel.a), false);
@@ -292,22 +320,31 @@ async function historial(vista, hasta) {
           ...fechas.flatMap((f) =>
             CONFIG.turnosTemperatura.map((t, i) => {
               const r = mapa.get(st.claveTemp(f, t, c.id));
-              return el("td", { class: `${i === 0 ? "sep" : ""} ${r ? (r.Estado === "OK" ? "t-ok" : "t-fuera") : "t-falta"}`, title: r?.Observaciones || "" }, r ? String(Math.round(r.Temperatura * 10) / 10).replace(".", ",") : "·");
+              const cls = !r ? "t-falta" : r.Estado === "Apagado" ? "t-apagado" : r.Estado === "OK" ? "t-ok" : "t-fuera";
+              const txt = !r ? "·" : r.Estado === "Apagado" ? "Apag." : String(Math.round(r.Temperatura * 10) / 10).replace(".", ",");
+              return el("td", { class: `${i === 0 ? "sep" : ""} ${cls}`, title: r?.Observaciones || "" }, txt);
             })
           ),
         ])
       ),
     ]);
     const faltan = conts.filter((c) => c.activo !== false).length * fechas.length * CONFIG.turnosTemperatura.length - rows.length;
-    const fuera = rows.filter((r) => r.Estado && r.Estado !== "OK");
+    const fuera = rows.filter(fueraDeRango);
+    const apagados = rows.filter((r) => r.Estado === "Apagado");
     const grafica = modo.value === "grafica";
     poner(cont,
-      el("p", { class: "nota pad" }, `${rows.length} lecturas · ${fuera.length} fuera de rango · ${Math.max(0, faltan)} sin registrar${grafica ? "" : " (·)"}. ${grafica ? "La franja verde es el rango del contenedor; los puntos rojos están fuera. Toca un punto para ver el detalle." : "Pasa el dedo o el mouse sobre una celda roja para ver la observación."}`),
+      el("p", { class: "nota pad" }, `${rows.length} lecturas · ${fuera.length} fuera de rango${apagados.length ? ` · ${apagados.length} apagado` : ""} · ${Math.max(0, faltan)} sin registrar${grafica ? "" : " (·)"}. ${grafica ? "La franja verde es el rango del contenedor; los puntos rojos están fuera. Toca un punto para ver el detalle." : "Pasa el dedo o el mouse sobre una celda roja para ver la observación."}`),
       grafica ? graficas(conts.filter((c) => c.activo !== false || rows.some((r) => r.ContenedorId === c.id)), [...fechas].reverse(), mapa) : tabla,
       fuera.length
         ? el("div", { class: "pad" }, [
             el("h2", {}, "Lecturas fuera de rango"),
             el("ul", { class: "lista-prod" }, fuera.map((r) => el("li", {}, `${st.fmtDia(st.diaISO(r.Fecha))} ${r.Turno} · ${r.Contenedor}: ${String(r.Temperatura).replace(".", ",")} °C (${r.Estado}) — ${r.Observaciones || "sin observación"} · ${r.Bodeguero || r.Operario || ""}`))),
+          ])
+        : null,
+      apagados.length
+        ? el("div", { class: "pad" }, [
+            el("h2", {}, "Contenedores apagados"),
+            el("ul", { class: "lista-prod" }, apagados.map((r) => el("li", {}, `${st.fmtDia(st.diaISO(r.Fecha))} ${r.Turno} · ${r.Contenedor} — ${r.Observaciones || "sin observación"} · ${r.Bodeguero || r.Operario || ""}`))),
           ])
         : null
     );
@@ -407,7 +444,7 @@ function graficas(conts, fechas, mapa) {
   const panel = (c) => {
     const W = 560, H = 190, L = 44, R = 12, T = 12, B = 30;
     const pts = slots.map((s, i) => ({ ...s, i, r: mapa.get(st.claveTemp(s.f, s.t, c.id)) }));
-    const vals = pts.filter((p) => p.r).map((p) => p.r.Temperatura);
+    const vals = pts.filter((p) => p.r && p.r.Temperatura != null).map((p) => p.r.Temperatura);
     const lo = Math.floor(Math.min(...vals, c.min ?? Infinity, c.max ?? Infinity) - 2);
     const hi = Math.ceil(Math.max(...vals, c.max ?? -Infinity, c.min ?? -Infinity) + 2);
     const X = (i) => L + (slots.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (slots.length - 1));
@@ -429,7 +466,7 @@ function graficas(conts, fechas, mapa) {
     // línea (se corta donde falta una lectura)
     let d = "", seguido = false;
     for (const p of pts) {
-      if (!p.r) {
+      if (!p.r || p.r.Temperatura == null) {
         seguido = false;
         continue;
       }
@@ -437,8 +474,17 @@ function graficas(conts, fechas, mapa) {
       seguido = true;
     }
     svg.append(sv("path", { d, class: "graf-linea" }));
-    for (const p of pts.filter((p) => p.r)) {
-      const fuera = p.r.Estado && p.r.Estado !== "OK";
+    // Apagado: marca gris al pie del gráfico (sin temperatura).
+    for (const p of pts.filter((p) => p.r?.Estado === "Apagado")) {
+      const t = sv("text", { x: X(p.i), y: H - B - 4, class: "graf-apagado", "text-anchor": "middle" }, "⏻");
+      const txt = `${st.fmtDia(p.f).slice(0, 5)} ${p.t} · contenedor apagado${p.r.Bodeguero ? ` · ${p.r.Bodeguero}` : ""}${p.r.Observaciones ? ` · ${p.r.Observaciones}` : ""}`;
+      t.addEventListener("pointerenter", (ev) => mostrar(ev, txt));
+      t.addEventListener("pointerdown", (ev) => mostrar(ev, txt));
+      t.addEventListener("pointerleave", ocultar);
+      svg.append(t);
+    }
+    for (const p of pts.filter((p) => p.r && p.r.Temperatura != null)) {
+      const fuera = fueraDeRango(p.r);
       const txt = `${st.fmtDia(p.f).slice(0, 5)} ${p.t} · ${fmtN(p.r.Temperatura)} °C · ${fuera ? (p.r.Estado === "Alto" ? "⚠ sobre el rango" : "⚠ bajo el rango") : "dentro de rango"}${p.r.Bodeguero ? ` · ${p.r.Bodeguero}` : ""}${p.r.Observaciones ? ` · ${p.r.Observaciones}` : ""}`;
       svg.append(sv("circle", { cx: X(p.i), cy: Y(p.r.Temperatura), r: fuera ? 5 : 4, class: fuera ? "graf-pto fuera" : "graf-pto" }));
       const hit = sv("circle", { cx: X(p.i), cy: Y(p.r.Temperatura), r: 14, class: "graf-hit" });
@@ -447,10 +493,11 @@ function graficas(conts, fechas, mapa) {
       hit.addEventListener("pointerleave", ocultar);
       svg.append(hit);
     }
-    const nFuera = pts.filter((p) => p.r?.Estado && p.r.Estado !== "OK").length;
+    const nFuera = pts.filter((p) => fueraDeRango(p.r)).length;
+    const nApag = pts.filter((p) => p.r?.Estado === "Apagado").length;
     return el("figure", { class: "graf-panel" }, [
-      el("figcaption", {}, [el("b", {}, c.nombre), el("small", {}, ` rango ${c.min ?? "—"} a ${c.max ?? "—"} °C · ${vals.length} lecturas${nFuera ? ` · ${nFuera} fuera` : ""}`)]),
-      vals.length ? svg : el("p", { class: "nota" }, "Sin lecturas en el período."),
+      el("figcaption", {}, [el("b", {}, c.nombre), el("small", {}, ` rango ${c.min ?? "—"} a ${c.max ?? "—"} °C · ${vals.length} lecturas${nFuera ? ` · ${nFuera} fuera` : ""}${nApag ? ` · ${nApag} apagado` : ""}`)]),
+      vals.length || nApag ? svg : el("p", { class: "nota" }, "Sin lecturas en el período."),
     ]);
   };
   const grid = el("div", { class: "graf-grid" }, [...conts.map(panel), tip]);

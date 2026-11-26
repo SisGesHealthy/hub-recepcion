@@ -2054,9 +2054,11 @@ export async function temperaturasDelDia(dia) {
   return [...mapa.values()];
 }
 
-export async function registrarTemperatura({ dia, turno, contenedor, temperatura, observaciones, bodeguero, existente }, fotoBlob) {
+// apagado: el contenedor estaba apagado en ese turno → sin temperatura, Estado "Apagado".
+export async function registrarTemperatura({ dia, turno, contenedor, temperatura, apagado = false, observaciones, bodeguero, existente }, fotoBlob) {
   const titulo = claveTemp(dia, turno, contenedor.id);
-  const estado = estadoTemp(temperatura, contenedor);
+  if (apagado) temperatura = null;
+  const estado = apagado ? "Apagado" : estadoTemp(temperatura, contenedor);
   const campos = {
     Title: titulo,
     Fecha: diaASP(dia),
