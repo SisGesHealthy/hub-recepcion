@@ -212,9 +212,10 @@ function filaLote(l, prod, dia, recargar, conProducto = false) {
   ]);
 }
 
-// Asignar / dividir / corregir lote. Fecha de elaboración = fecha de
-// producción, salvo al dividir (un lote para completar otro día). Caducidad
-// siempre a mano; se muestra la vida útil del último lote como referencia.
+// Asignar / dividir / corregir lote. El lote queda SIEMPRE bajo la fecha de
+// producción de la orden (Fechadeproducci_x00f3_n); la fecha de elaboración es
+// otra cosa y se edita (arranca en la de producción). Caducidad siempre a mano;
+// se muestra la vida útil del último lote como referencia.
 async function formLote({ of, prod, dia, dividir = false, lotes = [], lote = null, recargar }) {
   const editando = !!lote;
   // Base para sugerir: al dividir, el lote que ya tiene esta OF; si no, el
@@ -233,7 +234,7 @@ async function formLote({ of, prod, dia, dividir = false, lotes = [], lote = nul
     }
   }
   const codigo = el("input", { type: "text", value: editando ? lote.Title : sugerido, placeholder: "Código de lote", autocomplete: "off" });
-  const elab = el("input", { type: "date", value: elabInicial, ...(dividir || editando ? {} : { disabled: "" }) });
+  const elab = el("input", { type: "date", value: elabInicial });
   const cad = el("input", { type: "date", value: editando ? st.diaISO(lote.field_3) : "" });
   const vida = el("div", { class: "nota" });
   const ref = previo?.field_2 && previo?.field_3 ? Math.round((new Date(previo.field_3) - new Date(previo.field_2)) / 86400000) : null;
@@ -248,8 +249,13 @@ async function formLote({ of, prod, dia, dividir = false, lotes = [], lote = nul
   };
   cad.addEventListener("input", pintarVida);
   elab.addEventListener("input", () => {
-    // Al dividir, si cambia la elaboración se vuelve a sugerir el código.
-    if (dividir && previo && !codigo.dataset.tocado) codigo.value = st.sugerirCodigoLote(previo, elab.value) || codigo.value;
+    // Si cambia la elaboración se vuelve a sugerir el código (lleva el día del
+    // año de elaboración), mientras no lo hayan escrito a mano.
+    if (!editando && !codigo.dataset.tocado) {
+      // El código de Odoo trae el día de producción; el del último lote, su propia elaboración.
+      const base = origen.startsWith("Lote que ya tiene la orden") ? { Title: of.lote_odoo, field_2: st.diaASP(dia) } : previo;
+      if (base) codigo.value = st.sugerirCodigoLote(base, elab.value) || codigo.value;
+    }
     pintarVida();
   });
   codigo.addEventListener("input", () => (codigo.dataset.tocado = "1"));
@@ -264,7 +270,7 @@ async function formLote({ of, prod, dia, dividir = false, lotes = [], lote = nul
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, dividir ? "Fecha de elaboración (de este lote)" : "Fecha de elaboración"), elab]),
       el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Fecha de caducidad"), cad]),
     ]),
-    !dividir && !editando ? el("p", { class: "nota" }, "La elaboración es la fecha de producción. Para un lote de otra fecha usa “Dividir en otro lote”.") : null,
+    el("p", { class: "nota" }, `El lote queda en la producción del ${st.fmtDia(dia)}. La fecha de elaboración puede ser otra: corrígela si no coincide.`),
     vida,
     btn,
   ]);
