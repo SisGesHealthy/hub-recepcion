@@ -219,7 +219,8 @@ async function pantallaTurno(vista, dia, turno, abierto) {
         const x = apagado ? null : valor();
         if (!apagado && Math.abs(x) > 60) return toast(`${c.nombre}: ${fmtT(x)} no parece una lectura válida`, "err");
         // Foto del panel obligatoria siempre (también al corregir).
-        if (!foto) return toast(`${c.nombre}: falta la foto del panel`, "err"), btnFoto.classList.add("falta");
+        // Foto obligatoria salvo que el contenedor esté apagado.
+        if (!foto && !apagado) return toast(`${c.nombre}: falta la foto del panel`, "err"), btnFoto.classList.add("falta");
         if (!bodeguero.value) return toast("Elige el bodeguero arriba", "err"), bodeguero.focus();
         const ahora = st.turnoActual();
         if (!ahora.abierto || ahora.turno !== turno || ahora.dia !== dia) return toast(`Se cerró el horario del turno ${turno} (hasta ${st.finTurno(turno)})`, "err");
@@ -251,6 +252,8 @@ async function pantallaTurno(vista, dia, turno, abierto) {
         btnApagado.classList.toggle("activo", apagado);
         btnApagado.textContent = apagado ? "⏻ Contenedor apagado · tocar para registrar temperatura" : "⏻ El contenedor está apagado";
         btn.textContent = apagado ? (r ? "Guardar corrección (apagado)" : "Registrar apagado") : r ? "Guardar corrección" : "Registrar";
+        if (!foto) btnFoto.textContent = apagado ? "📷 Foto (opcional si está apagado)" : "📷 Tomar foto del panel (obligatoria)";
+        btnFoto.classList.remove("falta");
       };
       btnApagado.addEventListener("click", () => {
         apagado = !apagado;
