@@ -119,21 +119,54 @@ function resumen(l) {
   };
 }
 
+// Tiempo real que ocupan varias limpiezas: unión de sus intervalos
+// [inicio, liberación]. Las que corren en paralelo no se suman dos veces.
+function tiempoUnion(ls) {
+  const iv = ls.map((l) => [Date.parse(l.inicio), Date.parse(l.liberacion)]).sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let cur = null;
+  for (const [a, b] of iv) {
+    if (!cur || a > cur[1]) {
+      if (cur) total += cur[1] - cur[0];
+      cur = [a, b];
+    } else cur[1] = Math.max(cur[1], b);
+  }
+  return cur ? total + cur[1] - cur[0] : null;
+}
+
 // Indicadores del día (informe "Método / medición").
+// Arranque: las limpiezas del arranque corren en PARALELO; el tiempo va del
+// primer inicio al corte = la hora en que se liberó el ÚLTIMO equipo de todas
+// ellas (no la suma de cada una). Mientras alguna siga abierta, está "en curso".
+// Cambio de sabor: tiempo en que hubo al menos un cambio en limpieza (unión).
 function indicadoresDia(limpiezas) {
   const r = limpiezas.map((l) => ({ l, ...resumen(l) }));
-  const suma = (tipo) => {
-    const xs = r.filter((x) => x.l.tipo === tipo && x.duracion !== null);
-    return xs.length ? xs.reduce((a, x) => a + x.duracion, 0) : null;
-  };
+  const arr = limpiezas.filter((l) => l.tipo === "Arranque");
+  const arrListo = arr.length > 0 && arr.every((l) => l.liberacion);
+  const inicioArr = arr.length ? arr.map((l) => l.inicio).sort()[0] : null;
+  const corte = arrListo ? arr.map((l) => l.liberacion).sort().pop() : null;
+  const cambiosListos = limpiezas.filter((l) => l.tipo === "Cambio de sabor" && l.liberacion);
   return {
     realizados: r.reduce((a, x) => a + x.realizados, 0),
     aprobados: r.reduce((a, x) => a + x.hisopadosOk, 0),
-    arranque: suma("Arranque"),
-    cambio: suma("Cambio de sabor"),
-    cambios: r.filter((x) => x.l.tipo === "Cambio de sabor").length,
+    arranque: corte ? Date.parse(corte) - Date.parse(inicioArr) : null,
+    arranqueEnCurso: arr.length > 0 && !arrListo,
+    inicioArranque: inicioArr,
+    corte,
+    cambio: cambiosListos.length ? tiempoUnion(cambiosListos) : null,
+    cambios: limpiezas.filter((l) => l.tipo === "Cambio de sabor").length,
     estado: !r.length ? "—" : r.every((x) => x.l.liberacion) ? "OK" : "Pendiente",
   };
+}
+const textoArranque = (k) => (k.arranqueEnCurso ? "En curso" : fmtDur(k.arranque));
+
+// Tipo sugerido al asignar: mientras el arranque siga abierto (no se liberaron
+// todos sus equipos), lo nuevo también es arranque; después, cambio de sabor.
+function tipoSugerido(limpiezas) {
+  const vivas = limpiezas.filter((l) => !l.anulada);
+  if (!vivas.length) return "Arranque";
+  const arr = vivas.filter((l) => l.tipo === "Arranque");
+  return arr.length && arr.some((l) => !l.liberacion) && vivas.every((l) => l.tipo === "Arranque") ? "Arranque" : "Cambio de sabor";
 }
 
 // Personas que marcaron hoy en Hub Asistencia (lista RegistrosAsistencia, solo
@@ -280,7 +313,7 @@ function pintarKpis(nodo, limpiezas) {
   poner(nodo,
     kpi(k.realizados, "Hisopados realizados"),
     kpi(k.aprobados, "Hisopados aprobados", k.realizados > k.aprobados ? "ambar" : ""),
-    kpi(fmtDur(k.arranque), "Tiempo para arranque de planta"),
+    kpi(textoArranque(k), k.corte ? `Tiempo para arranque de planta · ${st.fmtHora(k.inicioArranque)} → ${st.fmtHora(k.corte)}` : "Tiempo para arranque de planta", k.arranqueEnCurso ? "ambar" : ""),
     kpi(k.estado, "Estado del registro", k.estado === "Pendiente" ? "ambar" : ""),
     kpi(fmtDur(k.cambio), `Tiempo de cambio de sabor${k.cambios > 1 ? ` (${k.cambios})` : ""}`)
   );
@@ -338,8 +371,7 @@ function selectorPersonas(dia, iniciales = []) {
 }
 
 function asignar(of, dia, limpiezasDia) {
-  const yaHay = limpiezasDia.some((l) => !l.anulada);
-  let tipo = yaHay ? "Cambio de sabor" : "Arranque";
+  let tipo = tipoSugerido(limpiezasDia);
   const opsTipo = el("div", { class: "opts" });
   const pintarTipo = () => {
     clear(opsTipo);
@@ -656,9 +688,9 @@ async function registro(vista) {
     const dias = [...new Set(ls.map((l) => l.dia))].sort().reverse();
     const filasDia = dias.map((d) => {
       const k = indicadoresDia(ls.filter((l) => l.dia === d));
-      return [st.fmtDia(d), k.realizados, k.aprobados, fmtDur(k.arranque), k.estado, fmtDur(k.cambio)];
+      return [st.fmtDia(d), k.realizados, k.aprobados, textoArranque(k), k.estado, fmtDur(k.cambio), k.corte ? st.fmtHora(k.corte) : ""];
     });
-    const encDia = ["Fecha", "Cantidad de hisopados de superficie realizados", "Cantidad de hisopados de superficie aprobados", "Tiempo para arranque de planta", "Estado de registro de limpieza y control de piezas", "Tiempo de cambio de sabor"];
+    const encDia = ["Fecha", "Cantidad de hisopados de superficie realizados", "Cantidad de hisopados de superficie aprobados", "Tiempo para arranque de planta", "Estado de registro de limpieza y control de piezas", "Tiempo de cambio de sabor", "Hora de arranque (último equipo liberado)"];
     // Detalle por hisopado (trazabilidad completa).
     const encDet = ["Fecha", "OF", "Producto", "Cliente", "Tipo", "Limpiaron", "Inicio limpieza", "Equipo", "Intento", "Hora hisopado", "Lectura (RLU)", "Resultado", "Recomendación", "Observación", "Analista", "Liberación", "Tiempo de limpieza"];
     const filasDet = [];
