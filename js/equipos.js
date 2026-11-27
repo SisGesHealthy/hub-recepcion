@@ -17,8 +17,7 @@
 // hisopados aprobados, tiempo para arranque de planta, estado del registro y
 // tiempo de cambio de sabor.
 //
-// Por ahora los registros se guardan EN ESTE EQUIPO (IndexedDB); cuando se
-// creen las listas de SharePoint, solo cambia la capa de datos de abajo.
+// Datos: listas LiberacionEquipos + HisopadosEquipos (ver la capa de datos).
 
 import { CONFIG } from "./config.js";
 import { el, clear } from "./dom.js";
@@ -47,24 +46,174 @@ function fmtDurCorta(ms) {
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
 }
 
-// ======================= datos (locales por ahora) =======================
+// ======================= datos =======================
+// SharePoint: LiberacionEquipos (una fila por limpieza, Title = id) y
+// HisopadosEquipos (una fila por hisopado, Title = id del hisopado, LimpiezaId).
+// Todo se guarda primero en el equipo y sube por la cola (sin señal no se pierde
+// nada). La copia local K guarda lo leído de SharePoint + lo pendiente de subir.
 
 const K = "equipos:limpiezas";
 const todas = async () => (await kv.get(K, {})) || {};
-async function guardar(l) {
+async function guardarLocal(l) {
   const m = await todas();
   m[l.id] = l;
   await kv.set(K, m);
 }
-const nuevoId = () => `LE-${Date.now().toString(36).toUpperCase()}`;
+const nuevoId = (p) => `${p}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+const parseJSON = (s, d) => {
+  try {
+    return JSON.parse(s) ?? d;
+  } catch {
+    return d;
+  }
+};
 
-export async function limpiezasRango(desde, hasta) {
+function cabecera(l) {
+  const r = resumen(l);
+  return {
+    Title: l.id,
+    Dia: l.dia,
+    OrdenFabricacion: l.of || "",
+    CodigoProducto: l.codigo || "",
+    Producto: l.producto,
+    Cliente: l.cliente || "",
+    Tipo: l.tipo,
+    Personas: l.personas.join(", "),
+    Inicio: l.inicio,
+    Liberacion: l.liberacion || null,
+    Estado: l.anulada ? "Anulado" : l.liberacion ? "Liberado" : "En curso",
+    Equipos: JSON.stringify(l.equipos.map(({ id, nombre }) => ({ id, nombre }))),
+    Cambios: JSON.stringify(l.cambios || []),
+    AsignadoPor: l.asignadoPor || "",
+    CorreoAsignador: l.correo || "",
+    DuracionMin: r.duracion !== null ? Math.round(r.duracion / 6000) / 10 : null,
+    HisopadosRealizados: r.realizados,
+    HisopadosAprobados: r.hisopadosOk,
+  };
+}
+
+function filaHisopado(l, eq, h, intento) {
+  return {
+    Title: h.id,
+    LimpiezaId: l.id,
+    Dia: l.dia,
+    OrdenFabricacion: l.of || "",
+    Producto: l.producto,
+    EquipoId: eq.id,
+    Equipo: eq.nombre,
+    Intento: intento,
+    Hora: h.hora,
+    LecturaRLU: h.valor,
+    Resultado: h.resultado,
+    Recomendacion: h.recomendacion || "",
+    Observacion: h.observacion || "",
+    Analista: h.analista || "",
+    CorreoAnalista: h.correo || "",
+  };
+}
+
+// Guarda en el equipo al instante y encola la subida.
+async function persistir(l, { nueva = false, hisopado = null } = {}) {
+  recalcular(l);
+  await guardarLocal(l);
+  const ref = l.id;
+  if (nueva) await st.encolarOperacion({ tipo: "add", lista: "limpiezasEq", clave: [["Title", "eq", l.id]], campos: cabecera(l), ref });
+  if (hisopado) await st.encolarOperacion({ tipo: "add", lista: "hisopadosEq", clave: [["Title", "eq", hisopado.h.id]], campos: filaHisopado(l, hisopado.eq, hisopado.h, hisopado.intento), ref });
+  if (!nueva) await st.encolarOperacion({ tipo: "updateWhere", lista: "limpiezasEq", where: [["Title", "eq", l.id]], campos: cabecera(l), ref });
+}
+
+const hisopadoDeSP = (h) => ({ id: h.Title, hora: h.Hora, valor: h.LecturaRLU, resultado: h.Resultado, recomendacion: h.Recomendacion || null, observacion: h.Observacion || null, analista: h.Analista || "", correo: h.CorreoAnalista || "" });
+
+function desdeSP(c, hs) {
+  const equipos = parseJSON(c.Equipos, []).map((e) => ({ id: e.id, nombre: e.nombre, hisopados: [] }));
+  for (const h of hs.filter((x) => x.LimpiezaId === c.Title).sort((a, b) => String(a.Hora).localeCompare(String(b.Hora)))) {
+    let eq = equipos.find((e) => e.id === h.EquipoId);
+    if (!eq) equipos.push((eq = { id: h.EquipoId, nombre: h.Equipo, hisopados: [] }));
+    eq.hisopados.push(hisopadoDeSP(h));
+  }
+  return recalcular({
+    id: c.Title,
+    dia: c.Dia,
+    of: c.OrdenFabricacion || "",
+    codigo: c.CodigoProducto || "",
+    producto: c.Producto || "",
+    cliente: c.Cliente || "",
+    tipo: c.Tipo || "Cambio de sabor",
+    personas: String(c.Personas || "").split(",").map((s) => s.trim()).filter(Boolean),
+    inicio: c.Inicio,
+    liberacion: c.Liberacion || null,
+    anulada: c.Estado === "Anulado",
+    asignadoPor: c.AsignadoPor || "",
+    correo: c.CorreoAsignador || "",
+    cambios: parseJSON(c.Cambios, []),
+    equipos,
+  });
+}
+
+// Lo pendiente de subir manda sobre lo leído (va más adelantado), pero los
+// hisopados que otro equipo ya subió se suman: nunca se pierde uno.
+function unirHisopados(l, hs) {
+  for (const h of hs.filter((x) => x.LimpiezaId === l.id)) {
+    if (l.equipos.some((e) => e.hisopados.some((x) => x.id === h.Title))) continue;
+    let eq = l.equipos.find((e) => e.id === h.EquipoId);
+    if (!eq) l.equipos.push((eq = { id: h.EquipoId, nombre: h.Equipo, hisopados: [] }));
+    eq.hisopados.push(hisopadoDeSP(h));
+    eq.hisopados.sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
+  }
+  return recalcular(l);
+}
+
+async function pendientesIds() {
+  return new Set((await st.operacionesPendientes()).filter((o) => o.lista === "limpiezasEq" || o.lista === "hisopadosEq").map((o) => o.ref));
+}
+
+// Trae de SharePoint las limpiezas del rango y actualiza la copia local.
+// Devuelve el error (texto) si no se pudo leer; se sigue con la copia.
+async function refrescarRango(desde, hasta) {
+  const api = st.getApi();
+  try {
+    const rango = [["Dia", "ge", desde], ["Dia", "le", hasta]];
+    const [cabs, hs] = await Promise.all([api.items("limpiezasEq", { where: rango, top: 5000 }), api.items("hisopadosEq", { where: rango, top: 5000 })]);
+    const pend = await pendientesIds();
+    const local = await todas();
+    const remotos = new Set(cabs.map((c) => c.Title));
+    for (const c of cabs) local[c.Title] = pend.has(c.Title) && local[c.Title] ? unirHisopados(local[c.Title], hs) : desdeSP(c, hs);
+    // Lo que ya no está en SharePoint y no espera subida (ej. se descartó en la cola) se quita.
+    for (const [id, l] of Object.entries(local)) if (l.dia >= desde && l.dia <= hasta && !remotos.has(id) && !pend.has(id)) delete local[id];
+    await kv.set(K, local);
+    return null;
+  } catch (e) {
+    console.warn("Liberación de equipos:", e);
+    return e.status === 403 || e.status === 401 ? "Sin permiso en las listas de Liberación de equipos: se muestra lo guardado en este equipo." : "Sin conexión con SharePoint: se muestra lo guardado en este equipo.";
+  }
+}
+
+async function refrescarUna(id) {
+  const api = st.getApi();
+  try {
+    const [c] = await api.items("limpiezasEq", { where: [["Title", "eq", id]], top: 1 });
+    if (!c) return;
+    const hs = await api.items("hisopadosEq", { where: [["LimpiezaId", "eq", id]], top: 500 });
+    const local = await todas();
+    local[id] = (await pendientesIds()).has(id) && local[id] ? unirHisopados(local[id], hs) : desdeSP(c, hs);
+    await kv.set(K, local);
+  } catch (e) {
+    console.warn("Liberación de equipos:", e);
+  }
+}
+
+let errorLectura = null;
+export async function limpiezasRango(desde, hasta, { remoto = true } = {}) {
+  if (remoto) errorLectura = await refrescarRango(desde, hasta);
   return Object.values(await todas())
     .filter((l) => !l.anulada && l.dia >= desde && l.dia <= hasta)
     .sort((a, b) => String(a.inicio).localeCompare(String(b.inicio)));
 }
 const limpiezasDelDia = (dia) => limpiezasRango(dia, dia);
-const getLimpieza = async (id) => (await todas())[id] || null;
+async function getLimpieza(id) {
+  await refrescarUna(id);
+  return (await todas())[id] || null;
+}
 
 // Equipos sugeridos para una ruta (centros de trabajo de Odoo). LIMPIEZA es la
 // propia operación de liberación: no aporta equipos.
@@ -227,6 +376,7 @@ async function tablero(vista, dia) {
 
   const [datosOF, limpiezas] = await Promise.all([st.cargarOF(), limpiezasDelDia(dia)]);
   if (datosOF.error) poner(avisoOF, el("div", { class: "aviso" }, datosOF.error));
+  if (errorLectura) poner(avisoOF, el("div", { class: "aviso" }, errorLectura));
   pintarKpis(kpis, limpiezas);
 
   // Ruta de respaldo: si una OF aún no tiene órdenes de trabajo, se usa la de
@@ -265,8 +415,7 @@ async function tablero(vista, dia) {
           el("summary", {}, `${otras.length} orden${otras.length > 1 ? "es" : ""} sin limpieza de equipos (encartonado, etc.)`),
           el("ul", {}, otras.map((o) => el("li", {}, `${o.producto} · ${o.of}${o.centrosRuta.length ? ` · ${o.centrosRuta.join(", ")}` : ""}`))),
         ])
-      : null,
-    el("p", { class: "nota" }, "Por ahora los registros se guardan en este equipo (prueba local).")
+      : null
   );
 
   function tarjeta(o, ls) {
@@ -433,7 +582,7 @@ function asignar(of, dia, limpiezasDia) {
     if (!ids.length) return toast("Marca al menos un equipo.", "err");
     const u = st.getUsuario();
     const l = {
-      id: nuevoId(),
+      id: nuevoId("LE"),
       dia,
       of: of?.of || "",
       codigo: of?.codigo || "",
@@ -448,7 +597,7 @@ function asignar(of, dia, limpiezasDia) {
       equipos: ids.map((id) => ({ id, nombre: nombreEquipo(id), hisopados: [] })),
       cambios: [],
     };
-    await guardar(l);
+    await persistir(l, { nueva: true });
     h.cerrar();
     toast(`Limpieza iniciada ${st.fmtHora(l.inicio)}`);
     location.hash = `#/equipos/l/${encodeURIComponent(l.id)}`;
@@ -531,7 +680,7 @@ async function detalle(vista, id) {
         if (!(await confirmar("Quitar equipo", `¿Quitar «${eq.nombre}» de esta limpieza?`, { si: "Quitar", peligro: true }))) return;
         l.equipos = l.equipos.filter((x) => x !== eq);
         l.cambios.push({ hora: new Date().toISOString(), por: st.getUsuario().nombre, texto: `Quitó el equipo ${eq.nombre}` });
-        await guardar(recalcular(l));
+        await persistir(l);
         pintar();
       });
       fila.appendChild(quitar);
@@ -545,7 +694,7 @@ async function detalle(vista, id) {
       if (!sel.value) return;
       l.equipos.push({ id: sel.value, nombre: nombreEquipo(sel.value), hisopados: [] });
       l.cambios.push({ hora: new Date().toISOString(), por: st.getUsuario().nombre, texto: `Agregó el equipo ${nombreEquipo(sel.value)}` });
-      await guardar(recalcular(l)); // si estaba liberada, vuelve a quedar en curso
+      await persistir(l); // si estaba liberada, vuelve a quedar en curso
       pintar();
     });
     return sel;
@@ -626,9 +775,9 @@ async function detalle(vista, id) {
         if (!recomendacion) return toast(rec === "Otro" ? "Escribe la recomendación." : "Elige una recomendación.", "err");
       }
       const estabaLiberada = !!l.liberacion;
-      eq.hisopados.push({ hora: new Date().toISOString(), valor, resultado, recomendacion, observacion: obs.value.trim() || null, analista: st.getUsuario().nombre, correo: st.getUsuario().correo });
-      recalcular(l);
-      await guardar(l);
+      const hNuevo = { id: nuevoId("H"), hora: new Date().toISOString(), valor, resultado, recomendacion, observacion: obs.value.trim() || null, analista: st.getUsuario().nombre, correo: st.getUsuario().correo };
+      eq.hisopados.push(hNuevo);
+      await persistir(l, { hisopado: { eq, h: hNuevo, intento: eq.hisopados.length } });
       h.cerrar();
       if (l.liberacion && !estabaLiberada) toast(`✓ Equipos liberados · ${fmtDurCorta(Date.parse(l.liberacion) - Date.parse(l.inicio))}`);
       else toast(resultado === "Aprobado" ? `${eq.nombre}: aprobado` : `${eq.nombre}: ${recomendacion}`, resultado === "Aprobado" ? "ok" : "err");
@@ -646,7 +795,7 @@ async function detalle(vista, id) {
       if (nuevas.join("|") !== l.personas.join("|")) {
         l.cambios.push({ hora: new Date().toISOString(), por: st.getUsuario().nombre, texto: `Personas: ${l.personas.join(", ")} → ${nuevas.join(", ")}` });
         l.personas = nuevas;
-        await guardar(l);
+        await persistir(l);
       }
       h.cerrar();
       pintar();
@@ -657,7 +806,7 @@ async function detalle(vista, id) {
     if (!(await confirmar("Anular limpieza", "Se quita del tablero (no tiene hisopados). ¿Continuar?", { si: "Anular", peligro: true }))) return;
     l.anulada = true;
     l.cambios.push({ hora: new Date().toISOString(), por: st.getUsuario().nombre, texto: "Anuló la limpieza" });
-    await guardar(l);
+    await persistir(l);
     location.hash = `#/equipos/${l.dia}`;
   }
 }

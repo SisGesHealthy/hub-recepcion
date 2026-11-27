@@ -43,6 +43,8 @@ export const CONFIG = {
       solicitudes: "Lists/SolicitudesModificacion", // cambios a registros ya guardados: justificación + aprobación
       documentos: "Documentos compartidos", // biblioteca: configuracion.json y clave de las OF (solo para revisar permisos)
       asistencia: "Lists/RegistrosAsistencia", // Hub Asistencia (solo lectura): quién marcó ingreso hoy
+      limpiezasEq: "Lists/LiberacionEquipos", // Liberación de equipos: una fila por limpieza (cabecera)
+      hisopadosEq: "Lists/HisopadosEquipos", // Liberación de equipos: una fila por hisopado (detalle)
     },
   },
 

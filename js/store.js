@@ -150,8 +150,12 @@ let repetir = false;
 // Grupos independientes de la cola: un registro que falla solo detiene a los
 // de su grupo (el orden importa dentro de una recepción), no a los demás.
 // Ej. una temperatura con error ya no deja trabados los pallets.
-const GRUPO = { temperaturas: "Temperaturas", controlPesos: "Control de pesos", parametrosPeso: "Control de pesos", lotes: "Calidad - Planta", registros: "Calidad - Planta", solicitudes: "Solicitudes de modificación" };
+const GRUPO = { temperaturas: "Temperaturas", controlPesos: "Control de pesos", parametrosPeso: "Control de pesos", lotes: "Calidad - Planta", registros: "Calidad - Planta", solicitudes: "Solicitudes de modificación", limpiezasEq: "Liberación de equipos", hisopadosEq: "Liberación de equipos" };
 const grupoDe = (op) => GRUPO[op.lista] || "Recepción y liberación";
+
+// Para módulos con su propia capa de datos (Liberación de equipos): misma cola.
+export const encolarOperacion = (op) => encolar(op);
+export const operacionesPendientes = () => idb.getAll("outbox");
 
 export function sincronizar() {
   if (corriendo) {
@@ -1525,7 +1529,7 @@ export const REQUISITOS = {
   bodega: { ordenes: "editar", liberaciones: "leer", pallets: "editar", recepciones: "editar" },
   calidad: { ordenes: "editar", liberaciones: "editar", recepciones: "leer", pallets: "leer" },
   planta: { lotes: "editar", registros: "editar", catalogo: "leer", solicitudes: "editar" },
-  equipos: { asistencia: "leer" },
+  equipos: { limpiezasEq: "editar", hisopadosEq: "editar", asistencia: "leer" },
   pesos: { controlPesos: "editar", parametrosPeso: "leer", lotes: "leer", catalogo: "leer" },
   temp: { temperaturas: "editar" },
   averias: {},
