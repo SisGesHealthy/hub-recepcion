@@ -324,7 +324,10 @@ async function personasDelDia(dia) {
   const api = st.getApi();
   if (CONFIG.useMock) await (await import("./mock.js")).sembrarAsistencia(dia);
   try {
-    const rows = await api.items("asistencia", { where: [["Jornada", "eq", dia]], select: ["EmpleadoID", "Nombre", "Accion", "FechaHora"], top: 2000 });
+    // La lista pasa de 5.000 marcaciones y Jornada no está indexada: filtrar por
+    // ella da "supera el umbral de vista de lista". Se leen las últimas por ID
+    // (siempre indexado; ~140 marcaciones al día) y se filtra el día aquí.
+    const rows = (await api.items("asistencia", { orderby: "ID desc", select: ["ID", "EmpleadoID", "Nombre", "Accion", "FechaHora", "Jornada"], top: 800 })).filter((r) => r.Jornada === dia);
     const por = new Map();
     for (const r of rows.sort((a, b) => String(a.FechaHora).localeCompare(String(b.FechaHora)))) {
       const nombre = String(r.Nombre || "").trim().replace(/\s+/g, " ");
