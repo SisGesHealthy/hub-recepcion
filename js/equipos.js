@@ -28,7 +28,52 @@ import { toast, hoja, confirmar, campoNum } from "./ui.js";
 // append() de DOM escribe "null" si recibe null: se filtran los vacíos.
 const poner = (nodo, ...hijos) => nodo.append(...hijos.flat().filter((h) => h !== null && h !== undefined && h !== false));
 const sinTildes = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
-const nombreEquipo = (id) => CONFIG.limpieza.equipos.find((e) => e.id === id)?.nombre || id;
+// Equipos escritos con "Otro" que ya aparecen en limpiezas guardadas (por si no
+// se pudieron agregar al catálogo compartido, ej. sin señal).
+const equiposVistos = new Map();
+const catalogoEquipos = () => {
+  const base = CONFIG.limpieza.equipos;
+  return [...base, ...[...equiposVistos.entries()].filter(([id]) => !base.some((e) => e.id === id)).map(([id, nombre]) => ({ id, nombre }))];
+};
+const nombreEquipo = (id) => catalogoEquipos().find((e) => e.id === id)?.nombre || id;
+const OTRO = "__otro";
+
+// "Otro": se escribe el nombre; queda en el catálogo compartido (configuracion.json)
+// para usarlo la próxima vez. Si ya existe con ese nombre, se usa el existente.
+function pedirEquipoNuevo() {
+  return new Promise((resolve) => {
+    let r = null;
+    const input = el("input", { type: "text", class: "obs", placeholder: "Nombre del equipo o utensilio", maxlength: "80" });
+    const btn = el("button", { class: "btn btn-verde btn-xl" }, "Agregar");
+    const h = hoja("Otro equipo", [el("p", { class: "nota" }, "Queda guardado en la lista de equipos para las próximas limpiezas."), input, el("div", { style: "height:12px" }), btn], { ancho: 460, onCerrar: () => resolve(r) });
+    const listo = async () => {
+      const nombre = input.value.trim().replace(/\s+/g, " ");
+      if (nombre.length < 3) return toast("Escribe el nombre del equipo.", "err");
+      const igual = catalogoEquipos().find((e) => sinTildes(e.nombre) === sinTildes(nombre));
+      if (igual) {
+        toast(`Ya existe: ${igual.nombre}`);
+        r = igual.id;
+        return h.cerrar();
+      }
+      btn.disabled = true;
+      try {
+        const eq = await st.agregarEquipoLimpieza(nombre);
+        toast(`«${eq.nombre}» agregado a la lista de equipos`);
+        r = eq.id;
+      } catch (e) {
+        console.warn("Equipo nuevo:", e);
+        // Sin señal: se usa en esta limpieza y queda visible en este equipo.
+        r = `EQX-${Date.now().toString(36).toUpperCase()}`;
+        equiposVistos.set(r, nombre);
+        toast("Sin conexión: se usa en esta limpieza; no se pudo agregar a la lista compartida.", "err");
+      }
+      h.cerrar();
+    };
+    btn.addEventListener("click", listo);
+    input.addEventListener("keydown", (e) => e.key === "Enter" && (e.preventDefault(), listo()));
+    setTimeout(() => input.focus(), 60);
+  });
+}
 const fmtRLU = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("es-EC"));
 const TIPOS = ["Arranque", "Cambio de sabor"];
 
@@ -205,7 +250,9 @@ async function refrescarUna(id) {
 let errorLectura = null;
 export async function limpiezasRango(desde, hasta, { remoto = true } = {}) {
   if (remoto) errorLectura = await refrescarRango(desde, hasta);
-  return Object.values(await todas())
+  const local = Object.values(await todas());
+  for (const l of local) for (const e of l.equipos) if (!CONFIG.limpieza.equipos.some((x) => x.id === e.id)) equiposVistos.set(e.id, e.nombre);
+  return local
     .filter((l) => !l.anulada && l.dia >= desde && l.dia <= hasta)
     .sort((a, b) => String(a.inicio).localeCompare(String(b.inicio)));
 }
@@ -547,12 +594,15 @@ function asignar(of, dia, limpiezasDia) {
     if (!listaEq.children.length) listaEq.appendChild(el("small", { class: "nota" }, "Sin equipos sugeridos: agrégalos abajo."));
     clear(otroEq);
     otroEq.appendChild(el("option", { value: "" }, "+ Agregar otro equipo…"));
-    for (const e of CONFIG.limpieza.equipos) if (!sug.ids.includes(e.id) && !extras.includes(e.id)) otroEq.appendChild(el("option", { value: e.id }, e.nombre));
+    for (const e of catalogoEquipos()) if (!sug.ids.includes(e.id) && !extras.includes(e.id)) otroEq.appendChild(el("option", { value: e.id }, e.nombre));
+    otroEq.appendChild(el("option", { value: OTRO }, "✎ Otro (escribir)…"));
   };
-  otroEq.addEventListener("change", () => {
-    if (!otroEq.value) return;
-    extras.push(otroEq.value);
-    marcados.add(otroEq.value);
+  otroEq.addEventListener("change", async () => {
+    let id = otroEq.value;
+    if (!id) return;
+    if (id === OTRO) id = await pedirEquipoNuevo();
+    if (id && !sug.ids.includes(id) && !extras.includes(id)) extras.push(id);
+    if (id) marcados.add(id);
     pintarEq();
   });
   pintarEq();
@@ -692,11 +742,17 @@ async function detalle(vista, id) {
   }
 
   function agregarEquipoSelect() {
-    const sel = el("select", { class: "dias" }, [el("option", { value: "" }, "+ Agregar equipo…"), ...CONFIG.limpieza.equipos.filter((e) => !l.equipos.some((x) => x.id === e.id)).map((e) => el("option", { value: e.id }, e.nombre))]);
+    const sel = el("select", { class: "dias" }, [
+      el("option", { value: "" }, "+ Agregar equipo…"),
+      ...catalogoEquipos().filter((e) => !l.equipos.some((x) => x.id === e.id)).map((e) => el("option", { value: e.id }, e.nombre)),
+      el("option", { value: OTRO }, "✎ Otro (escribir)…"),
+    ]);
     sel.addEventListener("change", async () => {
-      if (!sel.value) return;
-      l.equipos.push({ id: sel.value, nombre: nombreEquipo(sel.value), hisopados: [] });
-      l.cambios.push({ hora: new Date().toISOString(), por: st.getUsuario().nombre, texto: `Agregó el equipo ${nombreEquipo(sel.value)}` });
+      let id = sel.value;
+      if (id === OTRO) id = await pedirEquipoNuevo();
+      if (!id || l.equipos.some((x) => x.id === id)) return pintar();
+      l.equipos.push({ id, nombre: nombreEquipo(id), hisopados: [] });
+      l.cambios.push({ hora: new Date().toISOString(), por: st.getUsuario().nombre, texto: `Agregó el equipo ${nombreEquipo(id)}` });
       await persistir(l); // si estaba liberada, vuelve a quedar en curso
       pintar();
     });

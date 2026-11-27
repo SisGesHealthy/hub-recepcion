@@ -1366,6 +1366,34 @@ function aplicarConfig(cfg) {
   if (cfg?.aprobadores) CONFIG.aprobadores = { ...CONFIG.aprobadores, ...cfg.aprobadores };
   if (Array.isArray(cfg?.cuentasCalidad)) CONFIG.cuentasCalidad = cfg.cuentasCalidad;
   if (cfg?.inicialesHistoricas) CONFIG.inicialesHistoricas = { ...CONFIG.inicialesHistoricas, ...cfg.inicialesHistoricas };
+  if (Array.isArray(cfg?.limpiezaEquiposExtra))
+    CONFIG.limpieza.equipos = [...EQUIPOS_BASE, ...cfg.limpiezaEquiposExtra.filter((e) => e?.id && e?.nombre && !EQUIPOS_BASE.some((b) => b.id === e.id))];
+}
+const EQUIPOS_BASE = [...CONFIG.limpieza.equipos];
+
+// Liberación de equipos → "Otro": agrega un equipo al catálogo compartido
+// (configuracion.json, clave limpiezaEquiposExtra). Se relee el archivo justo
+// antes de escribir para no pisar cambios de otra cuenta; si no se puede leer
+// (sin señal), NO se escribe (lanza el error).
+export async function agregarEquipoLimpieza(nombre) {
+  const { carpeta, nombre: archivo } = CONFIG.archivoConfig;
+  let cfg;
+  try {
+    cfg = JSON.parse(await api.leerTexto(`${carpeta}/${archivo}`));
+  } catch (e) {
+    if (e.status !== 404) throw e;
+    cfg = (await kv.get("cache:config")) || {};
+  }
+  const extra = Array.isArray(cfg.limpiezaEquiposExtra) ? cfg.limpiezaEquiposExtra : [];
+  const clave = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+  const ya = [...EQUIPOS_BASE, ...extra].find((e) => clave(e.nombre) === clave(nombre));
+  if (ya) return ya;
+  const eq = { id: `EQX-${Date.now().toString(36).toUpperCase()}`, nombre, por: usuario?.correo || "", fecha: new Date().toISOString() };
+  cfg.limpiezaEquiposExtra = [...extra, eq];
+  await api.escribirArchivo(carpeta, archivo, JSON.stringify(cfg, null, 2));
+  await kv.set("cache:config", cfg);
+  aplicarConfig(cfg);
+  return eq;
 }
 
 // Al abrir la app NO se espera a SharePoint: se aplica al instante la última
@@ -1413,7 +1441,13 @@ export async function cargarConfig({ esperar = false } = {}) {
 
 export async function guardarConfig(cfg) {
   const { carpeta, nombre } = CONFIG.archivoConfig;
-  const datos = { ...cfg, accesosVersion: 5, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
+  // Los equipos agregados con "Otro" (Liberación de equipos) los escribe Calidad
+  // en el mismo archivo: se conservan los del archivo actual, no los de la pantalla.
+  let extra = (await kv.get("cache:config"))?.limpiezaEquiposExtra;
+  try {
+    extra = JSON.parse(await api.leerTexto(`${carpeta}/${nombre}`)).limpiezaEquiposExtra ?? extra;
+  } catch {}
+  const datos = { ...cfg, ...(extra ? { limpiezaEquiposExtra: extra } : {}), accesosVersion: 5, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
   await api.escribirArchivo(carpeta, nombre, JSON.stringify(datos, null, 2));
   await kv.set("cache:config", datos);
   await cargarConfig();
