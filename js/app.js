@@ -13,6 +13,7 @@ const DEPTOS = {
   bodega: { titulo: "Bodega", sub: "Recepción de fruta por pallet", icono: "🚚", ruta: "#/bodega" },
   calidad: { titulo: "Calidad", sub: "Liberación de materia prima", icono: "🧪", ruta: "#/calidad" },
   planta: { titulo: "Calidad - Planta", sub: "Liberación de producto en proceso", icono: "🏭", ruta: "#/planta" },
+  equipos: { titulo: "Liberación de equipos", sub: "Limpieza · hisopado con luminómetro", icono: "🧽", ruta: "#/equipos" },
   pesos: { titulo: "Control de pesos", sub: "Muestreo en dosificado", icono: "balanza", ruta: "#/pesos" },
   temp: { titulo: "Temperaturas", sub: "Contenedores · 3 turnos al día", icono: "termometro", ruta: "#/temp" },
   averias: { titulo: "Averías", sub: "Reportar · Calidad libera el equipo (PIN)", icono: "🔧", ruta: "#/averias" },
@@ -198,6 +199,7 @@ async function rutear() {
   if (seccion === "bodega") (await import("./bodega.js")).render(vista, resto);
   else if (seccion === "calidad") (await import("./calidad.js")).render(vista, resto);
   else if (seccion === "planta") (await import("./planta.js")).render(vista, resto);
+  else if (seccion === "equipos") (await import("./equipos.js")).render(vista, resto);
   else if (seccion === "config") (await import("./configuracion.js")).render(vista);
   else if (seccion === "pesos") (await import("./pesos.js")).render(vista, resto);
   else if (seccion === "temp") (await import("./temperaturas.js")).render(vista, resto);

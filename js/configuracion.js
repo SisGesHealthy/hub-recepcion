@@ -12,7 +12,7 @@ import { el, clear } from "./dom.js";
 import * as st from "./store.js";
 import { toast, confirmar, aNumero } from "./ui.js";
 
-const NOMBRES = { bodega: "Bodega", calidad: "Calidad (MP)", planta: "Calidad - Planta", pesos: "Control de pesos", temp: "Temperaturas", averias: "Averías", config: "Configuración", r04: "Registro R04 (ver)", r05: "Registro R05 (ver)" };
+const NOMBRES = { bodega: "Bodega", calidad: "Calidad (MP)", planta: "Calidad - Planta", equipos: "Liberación de equipos", pesos: "Control de pesos", temp: "Temperaturas", averias: "Averías", config: "Configuración", r04: "Registro R04 (ver)", r05: "Registro R05 (ver)" };
 
 export async function render(vista) {
   await st.cargarConfig({ esperar: true });

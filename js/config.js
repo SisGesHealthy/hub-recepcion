@@ -42,7 +42,68 @@ export const CONFIG = {
       temperaturas: "Lists/TemperaturasContenedores", // Temperaturas: una fila por contenedor y turno
       solicitudes: "Lists/SolicitudesModificacion", // cambios a registros ya guardados: justificación + aprobación
       documentos: "Documentos compartidos", // biblioteca: configuracion.json y clave de las OF (solo para revisar permisos)
+      asistencia: "Lists/RegistrosAsistencia", // Hub Asistencia (solo lectura): quién marcó ingreso hoy
     },
+  },
+
+  // Liberación de equipos (limpieza + hisopado con luminómetro). Catálogo de
+  // equipos del procedimiento P.ASC.12 (Hub Lavado) y qué equipos usa cada
+  // centro de trabajo de Odoo (Operaciones_por_Equipo.xlsx). Con la ruta de la
+  // OF (centros de sus órdenes de trabajo) se sugieren los equipos a limpiar.
+  limpieza: {
+    equipos: [
+      { id: "EQ-01", nombre: "Mesas de selección" },
+      { id: "EQ-02", nombre: "Rieles" },
+      { id: "EQ-03", nombre: "Tanques de lavado y desinfección de fruta" },
+      { id: "EQ-04", nombre: "Ralladores" },
+      { id: "EQ-05", nombre: "Despulpadores" },
+      { id: "EQ-06", nombre: "Tanques de retención y mezcla" },
+      { id: "EQ-07", nombre: "Marmitas" },
+      { id: "EQ-08", nombre: "Licuadora" },
+      { id: "EQ-09", nombre: "Bomba de desplazamiento positivo (Netzsch)" },
+      { id: "EQ-10", nombre: "Intercambiador de calor de tubos y coraza" },
+      { id: "EQ-11", nombre: "Tolvas y dosificador" },
+      { id: "EQ-12", nombre: "Jarras de envasado y gavetas" },
+      { id: "EQ-13", nombre: "Contenedores de refrigeración y congelación" },
+      { id: "EQ-14", nombre: "Cámaras de congelación" },
+      { id: "EQ-15", nombre: "Tachos y tapas de envasado producto terminado" },
+      { id: "EQ-16", nombre: "Banco de hielo" },
+      { id: "EQ-17", nombre: "Picadora" },
+      { id: "EQ-18", nombre: "Lavadora de fruta" },
+      { id: "EQ-19", nombre: "Despepador" },
+      { id: "EQ-20", nombre: "Envasadora automática" },
+      { id: "EQ-21", nombre: "Lavadora automática" },
+      { id: "EQ-22", nombre: "Selladoras, balanzas, tableros eléctricos" },
+    ],
+    // Centro de trabajo de Odoo (en mayúsculas, sin tildes) → equipos.
+    centros: {
+      "LAVADO 1": ["EQ-02", "EQ-03", "EQ-18"],
+      "LAVADO 2": ["EQ-02", "EQ-03"],
+      "LAVADO 4": ["EQ-02", "EQ-03"],
+      DESINFECCION: ["EQ-03"],
+      ESCALDADO: ["EQ-07"],
+      PULPEADO: ["EQ-05", "EQ-06"],
+      HOMOGENIZACION: ["EQ-06"],
+      PASTEURIZACION: ["EQ-07", "EQ-10"],
+      CALENTAMIENTO: ["EQ-07"],
+      COCINADO: ["EQ-07"],
+      MEZCLADO: ["EQ-07"],
+      "DOSIFICADO AUTOMATICO": ["EQ-11", "EQ-20"],
+      "DOSIFICADO MANUAL": ["EQ-11"],
+      "PELADO QUIMICO": ["EQ-11"],
+      "ENVASADO MANUAL": ["EQ-22"],
+      "ENFUNDADO 1": ["EQ-22"],
+      "ENFUNDADO 2": ["EQ-22"],
+      "RALLADO COCO": ["EQ-04"],
+      RALLADO: ["EQ-17"],
+      LICUADO: ["EQ-08"],
+      "DESPULPADO MANUAL": ["EQ-01"],
+      DESPEPADO: ["EQ-19", "EQ-01"],
+      "REVISION VISUAL/ MANUAL": ["EQ-01"],
+      TACHOS: ["EQ-15"],
+    },
+    // Recomendaciones de acceso rápido cuando un hisopado no aprueba.
+    recomendaciones: ["Volver a lavar", "Volver a enjuagar", "Lavado total"],
   },
 
   // Acceso por correo de la cuenta Microsoft con la que se inicia sesión
@@ -88,8 +149,8 @@ export const CONFIG = {
 
   accesos: {
     "bodega2@healthyfood.com.ec": ["bodega", "temp", "averias"],
-    "calidad@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias", "r04", "r05"],
-    "calidad2@healthyfood.com.ec": ["calidad", "planta", "pesos", "averias", "r04", "r05"],
+    "calidad@healthyfood.com.ec": ["calidad", "planta", "equipos", "pesos", "averias", "r04", "r05"],
+    "calidad2@healthyfood.com.ec": ["calidad", "planta", "equipos", "pesos", "averias", "r04", "r05"],
     // "config" = administrador: configuración y parámetros de peso
     "sistemasdegestion@healthyfood.com.ec": ["bodega", "calidad", "planta", "pesos", "config"],
   },

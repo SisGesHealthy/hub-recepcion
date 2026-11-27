@@ -47,11 +47,12 @@ def leer_ofs(x):
     ofs = x(
         "mrp.production", "search_read",
         [["production_date", ">=", desde.isoformat()], ["production_date", "<=", hasta.isoformat()], ["state", "!=", "cancel"]],
-        fields=["name", "product_id", "product_qty", "product_uom_id", "production_date", "state", "lot_producing_id", "date_start"],
+        fields=["name", "product_id", "product_qty", "product_uom_id", "production_date", "state", "lot_producing_id", "date_start", "origin"],
         order="production_date, date_start, name",
     )
     prod_ids = list({o["product_id"][0] for o in ofs if o["product_id"]})
     productos = {p["id"]: p for p in x("product.product", "read", prod_ids, fields=["default_code", "name", "weight", "uom_id"])} if prod_ids else {}
+    centros = leer_centros(x, [o["id"] for o in ofs])
     out = []
     for o in ofs:
         p = productos.get(o["product_id"][0], {}) if o["product_id"] else {}
@@ -69,8 +70,39 @@ def leer_ofs(x):
             # medida del producto (en productos a granel "kg" el peso es 1 = por kilo).
             "peso_kg": p.get("weight") or 0,
             "uom_producto": p["uom_id"][1] if p.get("uom_id") else "",
+            # Para Liberación de equipos: cliente (del origen de la OF), hora de
+            # inicio planificada (UTC) y centros de trabajo de su ruta, en orden.
+            "cliente": cliente_de_origen(o.get("origin")),
+            "inicio": (o["date_start"].replace(" ", "T") + "Z") if o.get("date_start") else "",
+            "centros": centros.get(o["id"], []),
         })
     return {"generado": dt.datetime.now(TZ).isoformat(timespec="seconds"), "desde": desde.isoformat(), "hasta": hasta.isoformat(), "ofs": out, **leer_catalogo(x)}
+
+
+def leer_centros(x, of_ids):
+    """Centros de trabajo de cada OF (sus órdenes de trabajo, en el orden de la
+    ruta). Liberación de equipos sugiere los equipos a limpiar a partir de ellos."""
+    if not of_ids:
+        return {}
+    wos = x(
+        "mrp.workorder", "search_read", [["production_id", "in", of_ids]],
+        fields=["production_id", "workcenter_id", "sequence"], order="production_id, sequence, id",
+    )
+    out = {}
+    for w in wos:
+        if not w["workcenter_id"]:
+            continue
+        lista = out.setdefault(w["production_id"][0], [])
+        if w["workcenter_id"][1] not in lista:
+            lista.append(w["workcenter_id"][1])
+    return out
+
+
+def cliente_de_origen(origen):
+    """'Programa produccion 24/11/2026 - Goya USA' → 'Goya USA';
+    'Encartonado 20/11/2026 - Goya USA - Lote HF PB 316 26 - …' → 'Goya USA'."""
+    partes = [p.strip() for p in str(origen or "").split(" - ")]
+    return partes[1] if len(partes) > 1 and partes[1] else ""
 
 
 # Prefijos de productos con lista de materiales que NO se dosifican/venden

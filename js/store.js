@@ -32,7 +32,7 @@ export function getApi() {
 
 // ---------------- usuario y accesos ----------------
 
-export const MODULOS = ["bodega", "calidad", "planta", "pesos", "temp", "averias", "config", "r04", "r05"];
+export const MODULOS = ["bodega", "calidad", "planta", "equipos", "pesos", "temp", "averias", "config", "r04", "r05"];
 const accesosDe = (c) => (c === CONFIG.administrador ? [...MODULOS] : CONFIG.accesos[c] || []);
 
 export function setUsuario(nombre, correo) {
@@ -1347,6 +1347,8 @@ function aplicarConfig(cfg) {
         if (!(cfg.accesosVersion >= 3) && mods.length && !mods.includes("averias")) mods = [...mods, "averias"];
         // v4: Registros R04/R05 para quienes ya los veían (Calidad, Planta, Configuración).
         if (!(cfg.accesosVersion >= 4) && ["calidad", "planta", "config"].some((m) => mods.includes(m))) mods = [...new Set([...mods, "r04", "r05"])];
+        // v5: Liberación de equipos para quienes tienen Calidad - Planta.
+        if (!(cfg.accesosVersion >= 5) && mods.includes("planta") && !mods.includes("equipos")) mods = [...mods, "equipos"];
         return [k.trim().toLowerCase(), mods];
       })
     );
@@ -1407,7 +1409,7 @@ export async function cargarConfig({ esperar = false } = {}) {
 
 export async function guardarConfig(cfg) {
   const { carpeta, nombre } = CONFIG.archivoConfig;
-  const datos = { ...cfg, accesosVersion: 4, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
+  const datos = { ...cfg, accesosVersion: 5, actualizado: new Date().toISOString(), por: usuario?.correo || "" };
   await api.escribirArchivo(carpeta, nombre, JSON.stringify(datos, null, 2));
   await kv.set("cache:config", datos);
   await cargarConfig();
@@ -1523,6 +1525,7 @@ export const REQUISITOS = {
   bodega: { ordenes: "editar", liberaciones: "leer", pallets: "editar", recepciones: "editar" },
   calidad: { ordenes: "editar", liberaciones: "editar", recepciones: "leer", pallets: "leer" },
   planta: { lotes: "editar", registros: "editar", catalogo: "leer", solicitudes: "editar" },
+  equipos: { asistencia: "leer" },
   pesos: { controlPesos: "editar", parametrosPeso: "leer", lotes: "leer", catalogo: "leer" },
   temp: { temperaturas: "editar" },
   averias: {},

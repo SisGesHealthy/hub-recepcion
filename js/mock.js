@@ -185,14 +185,17 @@ export function ofsDemo() {
     x.setDate(x.getDate() + d);
     return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
   };
+  // Hora planificada de inicio (hora local de hoy → ISO UTC, como la exporta Odoo).
+  const a = (h, m = 0) => hoyA(h, m);
   return {
     generado: new Date().toISOString(),
     ofs: [
-      { of: "SEM/MO/01790", id: 1, fecha: dia(0), codigo: "PTEC015", producto: "PULPA DE MARACUYA 150 g", cantidad: 12000, unidad: "Units", estado: "En proceso", lote_odoo: "" },
-      { of: "SEM/MO/01791", id: 2, fecha: dia(0), codigo: "PTEC002", producto: "PULPA DE GUANABANA GOYA USA UNIDAD 397 g", cantidad: 8800, unidad: "Units", estado: "Confirmada", lote_odoo: "" },
-      { of: "SEM/MO/01792", id: 3, fecha: dia(0), codigo: "SALS007", producto: "SALSA DE CHOCOLATE 1 KG", cantidad: 2000, unidad: "kg", estado: "En proceso", lote_odoo: "L2802604" },
-      { of: "SEM/MO/01796", id: 5, fecha: dia(0), codigo: "SALS009", producto: "SALSA DE ARANDANO", cantidad: 300, unidad: "kg", estado: "Confirmada", lote_odoo: "", peso_kg: 1, uom_producto: "kg" },
-      { of: "SEM/MO/01793", id: 4, fecha: dia(1), codigo: "PTEC014", producto: "PULPA DE MORA 150 g", cantidad: 5000, unidad: "Units", estado: "Confirmada", lote_odoo: "" },
+      { of: "SEM/MO/01790", id: 1, fecha: dia(0), codigo: "PTEC015", producto: "PULPA DE MARACUYA 150 g", cantidad: 12000, unidad: "Units", estado: "En proceso", lote_odoo: "", cliente: "Mérica", inicio: a(6), centros: ["LIMPIEZA", "LAVADO 2", "PULPEADO", "PASTEURIZACIÓN", "DOSIFICADO MANUAL", "ETIQUETADO"] },
+      { of: "SEM/MO/01791", id: 2, fecha: dia(0), codigo: "PTEC002", producto: "PULPA DE GUANABANA GOYA USA UNIDAD 397 g", cantidad: 8800, unidad: "Units", estado: "Confirmada", lote_odoo: "", cliente: "Goya USA", inicio: a(9, 30), centros: ["LIMPIEZA", "ESCALDADO", "PULPEADO", "HOMOGENIZACIÓN", "PASTEURIZACIÓN", "DOSIFICADO AUTOMÁTICO", "DOSIFICADO MANUAL", "ETIQUETADO"] },
+      { of: "SEM/MO/01792", id: 3, fecha: dia(0), codigo: "SALS007", producto: "SALSA DE CHOCOLATE 1 KG", cantidad: 2000, unidad: "kg", estado: "En proceso", lote_odoo: "L2802604", cliente: "Dulcafé", inicio: a(12), centros: ["LIMPIEZA", "MEZCLADO", "PASTEURIZACIÓN", "ENVASADO MANUAL"] },
+      { of: "SEM/MO/01796", id: 5, fecha: dia(0), codigo: "SALS009", producto: "SALSA DE ARANDANO", cantidad: 300, unidad: "kg", estado: "Confirmada", lote_odoo: "", peso_kg: 1, uom_producto: "kg", cliente: "Kaaru", inicio: a(14), centros: [] },
+      { of: "SEM/MO/01797", id: 6, fecha: dia(0), codigo: "PTEXP002", producto: "SOURSOP PULP 12 X 14 OZ", cantidad: 500, unidad: "Units", estado: "Confirmada", lote_odoo: "", cliente: "Goya USA", inicio: a(15), centros: ["ENCARTONADO"] },
+      { of: "SEM/MO/01793", id: 4, fecha: dia(1), codigo: "PTEC014", producto: "PULPA DE MORA 150 g", cantidad: 5000, unidad: "Units", estado: "Confirmada", lote_odoo: "", cliente: "Mérica", inicio: "", centros: ["LIMPIEZA", "LAVADO 2", "DESPULPADO MANUAL", "DOSIFICADO MANUAL", "ETIQUETADO"] },
     ],
     productos: [
       { codigo: "PTEC002", producto: "PULPA DE GUANABANA GOYA USA UNIDAD 397 g", peso_kg: 0.397, uom_producto: "Units", clientes: [] },
@@ -202,6 +205,24 @@ export function ofsDemo() {
     ],
     clientes: ["KAARUFOOD CIA LTDA", "PROBA LLC", "REYLACTEOS C.L.", "UNILEVER ANDINA ECUADOR S.A."],
   };
+}
+
+// Marcaciones de Hub Asistencia de hoy (misma forma que RegistrosAsistencia),
+// para elegir quién hace la limpieza. Se siembran una vez por día.
+export async function sembrarAsistencia(dia) {
+  const k = "demoAsistencia:" + dia;
+  if (await kv.get(k)) return;
+  const gente = [
+    ["0101", "Liliana Quishpe", 6, 2], ["0102", "Darwin Tipán", 6, 5], ["0103", "María Chicaiza", 6, 9], ["0104", "Jorge Simbaña", 6, 12],
+    ["0105", "Rosa Cumbal", 6, 20], ["0106", "Luis Farinango", 6, 25], ["0107", "Andrea Guamán", 7, 0], ["0108", "Kevin Toapanta", 7, 3],
+    ["0109", "Mónica Pilataxi", 13, 50], ["0110", "Carlos Lema", 13, 55],
+  ];
+  for (const [id, nombre, h, m] of gente) {
+    await api.add("asistencia", { Title: crypto.randomUUID(), EmpleadoID: id, Nombre: nombre, Accion: "Ingreso", FechaHora: hoyA(h, m), Jornada: dia });
+  }
+  // Una persona ya salió (no aparece como "en planta").
+  await api.add("asistencia", { Title: crypto.randomUUID(), EmpleadoID: "0104", Nombre: "Jorge Simbaña", Accion: "Salida", FechaHora: hoyA(10, 0), Jornada: dia });
+  await kv.set(k, true);
 }
 
 export async function borrarDemo() {
