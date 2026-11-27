@@ -206,10 +206,47 @@ function filaLote(l, prod, dia, recargar, conProducto = false) {
     l.ID
       ? el("div", { class: "fila-botones of-lote-btns" }, [
           el("button", { class: "btn btn-sec", title: "Corregir código o fechas", onclick: () => formLote({ lote: l, prod, dia, recargar }) }, "✎"),
+          st.esAdministrador() ? el("button", { class: "btn btn-sec btn-borrar", title: "Eliminar lote (solo Sistemas)", onclick: () => eliminarLote(l, recargar) }, "🗑") : null,
           el("a", { class: "btn btn-verde", href: `#/planta/lote/${l.ID}` }, "Registrar parada"),
         ])
       : el("span", { class: "estado estado-ambar" }, "Subiendo…"),
   ]);
+}
+
+// Eliminar un lote y sus paradas (solo Sistemas), con justificación. Queda
+// la constancia y una copia de todo en Solicitudes de modificación.
+async function eliminarLote(l, recargar) {
+  let paradas;
+  try {
+    paradas = await st.paradasParaEliminar(l);
+  } catch (e) {
+    return toast("Sin conexión con SharePoint: no se puede eliminar ahora", "err");
+  }
+  const just = el("textarea", { rows: "3", placeholder: "¿Por qué se elimina? (ej. lote asignado por error a esta orden)" });
+  const btn = el("button", { class: "btn btn-rojo btn-xl" }, `Eliminar lote${paradas.length ? ` y ${paradas.length} parada${paradas.length === 1 ? "" : "s"}` : ""}`);
+  const h = hoja(`Eliminar lote ${l.Title}`, [
+    el("p", { class: "sub" }, `Producción ${st.fmtDia(st.diaISO(l.Fechadeproducci_x00f3_n))} · elab. ${st.fmtDia(st.diaISO(l.field_2))} · cad. ${st.fmtDia(st.diaISO(l.field_3))}`),
+    el("p", { class: "aviso" }, paradas.length
+      ? `Se eliminan el lote y sus ${paradas.length} parada${paradas.length === 1 ? "" : "s"} registradas (mediciones, sensorial, controles y microbiología). Queda una copia completa en Solicitudes de modificación.`
+      : "El lote no tiene paradas registradas. Queda la constancia en Solicitudes de modificación."),
+    el("label", { class: "campo" }, [el("span", { class: "campo-label" }, "Justificación (obligatoria)"), just]),
+    btn,
+  ]);
+  btn.addEventListener("click", async () => {
+    if (just.value.trim().length < 10) return toast("Escribe la justificación", "err"), just.focus();
+    if (!(await confirmar("¿Eliminar definitivamente?", `Lote ${l.Title}${paradas.length ? ` con ${paradas.length} parada(s)` : ""}. No se puede deshacer desde la app.`, { si: "Eliminar", peligro: true }))) return;
+    btn.disabled = true;
+    try {
+      await st.eliminarLote(l, paradas, just.value.trim());
+    } catch (e) {
+      btn.disabled = false;
+      return toast(e.message, "err");
+    }
+    h.cerrar();
+    toast(`Lote ${l.Title} eliminado`);
+    await st.subirAhora();
+    recargar?.();
+  });
 }
 
 // Asignar / dividir / corregir lote. El lote queda SIEMPRE bajo la fecha de

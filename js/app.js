@@ -40,7 +40,7 @@ try {
 async function main() {
   if (CONFIG.useMock) {
     const guardado = localStorage.getItem("hub-recepcion:demoUser") || DEMO_USUARIOS[0][1];
-    const u = DEMO_USUARIOS.find((x) => x[1] === guardado) || DEMO_USUARIOS[0];
+    const u = DEMO_USUARIOS.find((x) => x[1] === guardado) || [guardado.split("@")[0], guardado];
     setUsuario(u[0], u[1]);
   } else {
     const auth = await import("./auth.js");

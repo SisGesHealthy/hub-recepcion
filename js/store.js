@@ -1192,6 +1192,41 @@ export async function listarLotes() {
 
 // Paradas del lote: mismo código de lote Y misma fecha de producción (un mismo
 // código puede repetirse en otro día, ej. "HF PB 265 26").
+// Eliminar un lote y sus paradas (solo Sistemas). Antes se guarda una copia
+// completa en SolicitudesModificacion (constancia + respaldo para recuperarlo).
+export const esAdministrador = () => !!usuario && usuario.correo === CONFIG.administrador && !usuario.verComo;
+
+export async function paradasParaEliminar(lote) {
+  const where = [["Title", "eq", lote.Title]];
+  const f = lote.Fechadeproducci_x00f3_n;
+  if (f) where.push(["Fecha_produccion", "ge", new Date(diaASP(diaISO(f)))], ["Fecha_produccion", "lt", new Date(diaASP(sumarDias(diaISO(f), 1)))]);
+  return api.items("registros", { where, orderby: "ID asc", top: 500 }); // sin red: falla (no se borra a medias)
+}
+
+export async function eliminarLote(lote, paradas, justificacion) {
+  if (!esAdministrador()) throw new Error("Solo Sistemas puede eliminar registros.");
+  const limpio = (x) => Object.fromEntries(Object.entries(x).filter(([k, v]) => !k.startsWith("odata") && !/^(AuthorId|EditorId|GUID|ComplianceAssetId|FileSystemObjectType|ServerRedirectedEmbedUri|ServerRedirectedEmbedUrl|ContentTypeId|Attachments|OData__UIVersionString)$/.test(k) && v !== null && v !== ""));
+  const Title = nuevoCodigo();
+  await encolar({
+    tipo: "add",
+    lista: "solicitudes",
+    clave: [["Title", "eq", Title]],
+    campos: {
+      Title, Modulo: "planta", Lista: "lotes", ItemID: lote.ID,
+      Referencia: `ELIMINACIÓN · Lote ${lote.Title} · producción ${fmtFecha(lote.Fechadeproducci_x00f3_n, false)}`,
+      Cambios: JSON.stringify({ eliminado: { lote: limpio(lote), paradas: paradas.map(limpio) } }),
+      Resumen: `Lote ${lote.Title} eliminado con sus ${paradas.length} parada${paradas.length === 1 ? "" : "s"}`,
+      Justificacion: justificacion,
+      Solicitante: usuario?.nombre || "", SolicitanteCorreo: usuario?.correo || "", Estado: "Aprobada",
+      Resolutor: usuario?.nombre || usuario?.correo || "", FechaResolucion: new Date().toISOString(), Directa: true,
+    },
+  });
+  for (const p of paradas) await encolar({ tipo: "removeWhere", lista: "registros", where: [["ID", "eq", p.ID]] });
+  await encolar({ tipo: "removeWhere", lista: "lotes", where: [["ID", "eq", lote.ID]] });
+  const cache = await kv.get("cache:lotes", []);
+  await kv.set("cache:lotes", cache.filter((l) => l.ID !== lote.ID));
+}
+
 export async function registrosDeLote(lote) {
   try {
     const where = [["Title", "eq", lote.Title]];

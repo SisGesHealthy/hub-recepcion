@@ -512,6 +512,7 @@ a.control-fila { color: inherit; text-decoration: none; }
 .temp-tabla td.t-apagado { background: #e6e6e6; color: #555; font-weight: 700; }
 .graf-apagado { fill: #777; font-size: 14px; cursor: pointer; }
 @media (prefers-color-scheme: dark) { .temp-card.apagado { background: #2a2a2a; } .temp-apagado.activo { background: #3a3a3a; color: #eee; } }
+.btn-borrar { color: var(--rojo); }
 .check-linea { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--dim); margin: 4px 0; }
 .en-curso { display: flex; flex-direction: column; gap: 6px; }
 .en-curso-fila { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
